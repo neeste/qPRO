@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>qPRO — Clinician Quick-Reference Guide</title>
+  <style>
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; max-width: 880px; margin: 0 auto; padding: 28px 20px; line-height: 1.55; color: #1e293b; background: #f8fafc; }
+    h1 { color: #14284B; border-bottom: 3px solid #D4A017; padding-bottom: 8px; }
+    h2 { color: #14284B; margin-top: 26px; }
+    .card { background: #ffffff; border: 1px solid #cbd5e1; border-radius: 8px; padding: 14px 18px; margin: 14px 0; }
+    table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+    th, td { border: 1px solid #cbd5e1; padding: 8px 10px; text-align: left; }
+    th { background: #14284B; color: #ffffff; }
+    a.back { display: inline-block; margin-bottom: 14px; color: #1d4ed8; font-weight: 700; text-decoration: none; }
+  </style>
+</head>
+<body>
+  <a href="index.html" class="back">&larr; Back to qPRO Report</a>
+  <h1>qPRO — Quick Suprathreshold Profile: Clinician Guide</h1>
+  <p><strong>qPRO</strong> integrates a patient's <strong>Pure-Tone Audiogram (0.25–8 kHz)</strong>, <strong>qCLS Categorical Loudness Scaling (CU 5–50)</strong>, and <strong>qVCV Consonant-in-Noise Test</strong> inside the browser via WebAssembly—no patient data ever leaves your computer.</p>
+
+  <h2>1. Reading the Six Landscape Panels</h2>
+  <div class="card">
+    <ul>
+      <li><strong>Panel A (Loudness Scaling &amp; SPL-o-gram):</strong> Compares patient loudness contours (<code>CU 5</code> softest to <code>CU 50</code> UCL) against Normal-Hearing norms and conversational speech (<code>60 dB SPL</code>). Colored top bands show where Voicing/Nasal, Place-Burst, and Fricative (<code>S/SH/Z</code>) cues lie in frequency.</li>
+      <li><strong>Panel B (Audiogram &amp; Cochlear Loss):</strong> Splits pure-tone loss into <em>Outer Hair Cell Loss</em> (loudness recruitment &amp; spectral smearing) vs. <em>Inner Hair Cell / Sensitivity Loss</em>.</li>
+      <li><strong>Panel C (Estimated SNR Loss Breakdown):</strong> Separates QuickSIN-style <strong>Estimated SNR Loss (dB)</strong> into three actionable components: (1) <em>Inaudibility</em> (restorable with gain), (2) <em>Recruitment &amp; Upward Masking</em> (managed via WDRC &amp; low-frequency gain control), and (3) <em>Suprathreshold Clarity Loss</em> (indicating directional or remote-microphone SNR support).</li>
+      <li><strong>Panel D (Expected vs. Actual qVCV Score):</strong> Shows whether actual unaided (and aided) recognition matches what the audiogram and qCLS predict—immediately flagging hidden clarity deficits or aided WDRC rollover.</li>
+      <li><strong>Panel E (Consonant Confusion Pattern %):</strong> De-noised percentage confusion table plus Speech Cue Clarity (% of Normal) for Voicing, Manner, and Place.</li>
+      <li><strong>Panel F (Quality Checks, REM Targets &amp; Guidance):</strong> Automated booth cross-checks, patient-specific <code>0.5/1/2/4 kHz</code> <strong>Comfort (CU 25)</strong> and <strong>MPO Cap (CU 50)</strong> targets in <code>dB SPL</code> for Verifit/REM verification, and targeted fitting bullets.</li>
+    </ul>
+  </div>
+
+  <h2>2. Empirical Normal-Hearing Cutoffs</h2>
+  <table>
+    <thead>
+      <tr><th>Clinical Metric</th><th>Normal Limit</th><th>Clinical Interpretation Above Cutoff</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Total Estimated SNR Loss</td><td><code>&le; +4.5 dB</code></td><td>Mild (<code>4.6–8.0 dB</code>), Moderate (<code>8.1–15.0 dB</code>), Severe (<code>&gt; 15.0 dB</code>)</td></tr>
+      <tr><td>1. Inaudibility SNR Loss</td><td><code>&le; +1.0 dB</code></td><td>Portion of SIN difficulty recoverable with frequency-specific gain</td></tr>
+      <tr><td>2. Recruitment &amp; Masking Loss</td><td><code>&le; +0.8 dB</code></td><td>Use moderate WDRC, cap MPO at <code>CU 50</code>, avoid excess LF gain</td></tr>
+      <tr><td>3. Suprathreshold Clarity Loss</td><td><code>&le; +3.7 dB</code></td><td>Gain alone will not normalize SIN; recommend directional / remote-mic</td></tr>
+      <tr><td>Normal-Hearing qVCV Score</td><td><code>&ge; 86.5%</code></td><td>5th percentile lower limit of Normal-Hearing adults (median <code>99.0%</code>)</td></tr>
+    </tbody>
+  </table>
+
+  <h2>3. Hearing-Aid Prescription &amp; REM Sheet (<code>qPRO-Rx</code>)</h2>
+  <div class="card">
+    <p>Use the <strong>Prescription / REM Sheet</strong> toggle in the top toolbar to view and print an individualized Real-Ear Aided Response (<code>REAR</code>) and Insertion Gain prescription across <code>250–8000 Hz</code>:</p>
+    <ul>
+      <li><strong>Loudness-Mapped Targets (<code>qCLS</code>):</strong> Maps Soft (<code>50 dB</code>), Average (<code>65 dB</code>), and Loud (<code>80 dB SPL</code>) ISTS speech bands onto the patient's measured <code>qCLS</code> contours (with audiogram NAL-style fallback if <code>qCLS</code> is unavailable) and anchors the <strong>MPO Cap</strong> directly to <code>CU 50</code>.</li>
+      <li><strong>Speech-in-Noise Guardrails:</strong> Automatically restrains low-frequency gain (<code>&lt; 1 kHz</code>) when high-frequency recruitment/smearing would cause upward spread of masking, caps high-frequency gain on severe clarity-loss bands (<code>&ge; 3 kHz</code>) to avoid distortion, and limits channel WDRC compression ratios to <code>&le; 2.8 : 1</code> (with slow release <code>&ge; 400 ms</code> when envelope cue clarity is reduced).</li>
+      <li><strong>Biophysical Outcome Prediction:</strong> Simulates the patient's <strong>Predicted Aided qVCV (%)</strong> under the prescribed gain and WDRC settings so clinicians can verify real-ear aided speech recognition against an individualized expectation.</li>
+    </ul>
+  </div>
+</body>
+</html>

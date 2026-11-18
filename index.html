@@ -1,0 +1,973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#070d1b">
+  <title>qPRO — Quick Suprathreshold Clinical Profile</title>
+  <style>
+    :root {
+      --navy: #070d1b;
+      --hdr-navy: #14284B;
+      --blue: #394c7d;
+      --gold: #efc563;
+      --cream: #FAF8F4;
+      --slate: #334155;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: linear-gradient(180deg, #24355a 0%, #0b1428 100%);
+      color: #f8fafc;
+      min-height: 100vh;
+    }
+
+    /* Screen Top Bar */
+    .app-topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      padding: 8px 18px;
+      background: rgba(7, 13, 27, 0.92);
+      border-bottom: 1px solid rgba(239, 197, 99, 0.35);
+    }
+    .brand-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .brand-title strong { color: var(--gold); font-size: 18px; letter-spacing: 0.03em; }
+    .brand-title span { display: block; font-size: 11.5px; color: #cbd5e1; }
+    .hospital-badge {
+      background: #ffffff;
+      padding: 4px 10px;
+      border-radius: 6px;
+      display: flex;
+      align-items: center;
+    }
+    .hospital-badge img { height: 32px; width: auto; object-fit: contain; }
+
+    /* Control Strip */
+    .toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 10px;
+      padding: 10px 18px;
+      background: #162340;
+      border-bottom: 1px solid #2d3f66;
+    }
+    .toolbar-group {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .toolbar label {
+      font-size: 12px;
+      font-weight: 600;
+      color: #cbd5e1;
+    }
+    .toolbar select, .toolbar button, .btn {
+      font: inherit;
+      font-size: 12.5px;
+      border-radius: 6px;
+      padding: 6px 11px;
+      border: 1px solid #475569;
+      background: #0f172a;
+      color: #f8fafc;
+      cursor: pointer;
+    }
+    .toolbar button:hover, .btn:hover { filter: brightness(1.12); }
+    .btn-gold {
+      background: #d4a017 !important;
+      color: #070d1b !important;
+      border-color: #facc15 !important;
+      font-weight: 700;
+    }
+    .btn-teal {
+      background: #0f766e !important;
+      border-color: #14b8a6 !important;
+      font-weight: 600;
+    }
+    .btn-outline {
+      background: transparent !important;
+      border-color: var(--gold) !important;
+      color: var(--gold) !important;
+      text-decoration: none;
+      display: inline-flex;
+      align-items: center;
+    }
+    #wasm-status {
+      font-size: 11.5px;
+      color: #86efac;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+
+    /* Collapsible Patient Data & CSV Input Drawer */
+    #data-drawer {
+      max-width: 1280px;
+      margin: 12px auto 0;
+      background: #f8fafc;
+      color: #0f172a;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      padding: 14px 18px;
+      box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+    }
+    #data-drawer[hidden] { display: none; }
+    .drawer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(265px, 1fr));
+      gap: 14px;
+      margin-top: 10px;
+    }
+    .drawer-card {
+      background: #ffffff;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      padding: 10px 12px;
+    }
+    .drawer-card h3 {
+      margin: 0 0 8px;
+      font-size: 13px;
+      color: var(--hdr-navy);
+      border-bottom: 1px solid #e2e8f0;
+      padding-bottom: 4px;
+    }
+    .field-row {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 7px;
+      align-items: center;
+    }
+    .field-row label {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #334155;
+      min-width: 92px;
+    }
+    .field-row input, .field-row select {
+      flex: 1;
+      padding: 4px 7px;
+      border: 1px solid #cbd5e1;
+      border-radius: 4px;
+      font-size: 12px;
+    }
+    .aud-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 6px;
+    }
+    .aud-cell {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .aud-cell span { font-size: 10.5px; font-weight: 700; color: #475569; }
+    .aud-cell input {
+      width: 100%;
+      text-align: center;
+      padding: 4px 2px;
+      border: 1px solid #94a3b8;
+      border-radius: 4px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+
+    /* ==============================================================
+     * 1-PAGE US LETTER LANDSCAPE REPORT SHEET (11 : 8.5 Aspect Ratio)
+     * ============================================================== */
+    .sheet-wrap {
+      padding: 12px 14px;
+      display: flex;
+      justify-content: center;
+    }
+    #report-sheet {
+      width: min(100%, 1340px);
+      aspect-ratio: 11 / 8.5;
+      background: var(--cream);
+      color: #0f172a;
+      border-radius: 8px;
+      padding: 10px 12px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.48);
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+
+    .qpro-hdr-banner {
+      background: var(--hdr-navy);
+      border: 2px solid #d4a017;
+      border-radius: 8px;
+      padding: 7px 14px 8px;
+      color: #ffffff;
+      flex-shrink: 0;
+    }
+    .qpro-hdr-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+    }
+    .qpro-hdr-title {
+      font-size: 16.5px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .qpro-hdr-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .qpro-ear-badge {
+      padding: 2px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 0.03em;
+    }
+    .qpro-hdr-sub {
+      color: #efc563;
+      font-size: 12.5px;
+      font-weight: 700;
+    }
+    .qpro-hdr-meta {
+      font-size: 11.5px;
+      color: #e2e8f0;
+      margin: 4px 0 5px;
+    }
+    .qpro-pheno-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 3px 10px;
+      border-radius: 5px;
+      border: 1px solid rgba(255, 255, 255, 0.85);
+      font-size: 11.5px;
+      font-weight: 800;
+      color: #ffffff;
+    }
+    .qpro-aided-pill { font-size: 11.2px; }
+
+    .qpro-grid-3x2 {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      grid-template-rows: repeat(2, 1fr);
+      gap: 8px 10px;
+    }
+    .qpro-cell {
+      background: #ffffff;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      padding: 2px;
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      overflow: hidden;
+    }
+    .qpro-svg {
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+
+    /* Panel F Clinical Summary Card */
+    .qpro-card-f {
+      padding: 10px 13px;
+      font-size: clamp(10.0px, 0.88vw, 11.6px);
+      line-height: 1.38;
+      color: #1e293b;
+    }
+    .f-title {
+      font-size: clamp(11.6px, 1.0vw, 13.2px);
+      font-weight: 800;
+      color: var(--hdr-navy);
+      margin-bottom: 6px;
+    }
+    .f-sec-hdr {
+      font-size: clamp(9.8px, 0.82vw, 11.0px);
+      font-weight: 800;
+      color: #475569;
+      letter-spacing: 0.02em;
+      margin: 7px 0 4px;
+    }
+    .qc-row {
+      display: flex;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .qc-badge { font-weight: 800; flex-shrink: 0; }
+    .qc-pass { color: #15803d; }
+    .qc-warn { color: #d97706; }
+    .qc-alert { color: #b91c1c; }
+    .f-conf-line {
+      margin-bottom: 5px;
+      color: #1e293b;
+    }
+    .f-conf-line.has-conf { font-weight: 700; }
+    .rem-strip {
+      background: #eff6ff;
+      border: 1px solid #93c5fd;
+      color: #1e3a8a;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-size: clamp(9.6px, 0.80vw, 10.8px);
+      margin-bottom: 6px;
+    }
+    .f-rec-list {
+      margin: 0;
+      padding-left: 16px;
+    }
+    .f-rec-list li { margin-bottom: 5px; }
+
+    /* Segmented View Toggle in Toolbar */
+    .view-toggle {
+      display: inline-flex;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--gold);
+    }
+    .view-toggle button {
+      border: 0 !important;
+      border-radius: 0 !important;
+      padding: 6px 12px;
+      background: #0f172a;
+      color: #e2e8f0;
+      font-weight: 700;
+      font-size: 12.5px;
+    }
+    .view-toggle button.active {
+      background: var(--gold) !important;
+      color: #070d1b !important;
+    }
+
+    /* Prescription / REM Sheet Table (Spans 2 Columns in Bottom Row) */
+    .rx-table-span2 {
+      grid-column: span 2;
+      padding: 10px 14px;
+      justify-content: space-between;
+    }
+    .rx-target-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: clamp(9.8px, 0.85vw, 11.4px);
+      margin: 4px 0;
+    }
+    .rx-target-table th, .rx-target-table td {
+      border: 1px solid #cbd5e1;
+      padding: 4px 5px;
+      text-align: center;
+    }
+    .rx-target-table th:first-child, .rx-target-table td:first-child {
+      text-align: left;
+      padding-left: 8px;
+      white-space: nowrap;
+    }
+    .rx-target-table thead th {
+      background: var(--hdr-navy);
+      color: #ffffff;
+      font-weight: 700;
+    }
+    .rx-hl-row td { background: #f5f3ff; }
+    .rx-bold { font-weight: 800; color: #4c1d95; }
+    .rx-mpo-row td { background: #fef2f2; }
+    .rx-mpo-cell { font-weight: 800; color: #991b1b; }
+    .rx-table-note {
+      font-size: clamp(9.4px, 0.80vw, 10.6px);
+      color: #334155;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      border-radius: 4px;
+      padding: 4px 8px;
+    }
+
+    /* Local-Privacy Screen Footer (reassures clinicians on plain HTTP; hidden when printing) */
+    .privacy-footer {
+      max-width: 1280px;
+      margin: 0 auto 20px;
+      padding: 8px 16px;
+      text-align: center;
+      font-size: 12px;
+      color: #cbd5e1;
+      background: rgba(7, 13, 27, 0.72);
+      border: 1px solid rgba(239, 197, 99, 0.28);
+      border-radius: 7px;
+    }
+    .privacy-footer strong { color: #86efac; }
+
+    /* Print Exact 1-Page US Letter Landscape (Zero Page-2 Spillover) */
+    @media print {
+      @page {
+        size: 11in 8.5in;
+        margin: 0.22in;
+      }
+      html, body {
+        width: 100% !important;
+        height: auto !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: hidden !important;
+        background: #FAF8F4 !important;
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+      }
+      .app-topbar, .toolbar, #data-drawer, .privacy-footer {
+        display: none !important;
+      }
+      .sheet-wrap {
+        display: block !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+      }
+      #report-sheet {
+        width: 100% !important;
+        max-width: 10.45in !important;
+        height: 7.48in !important;
+        aspect-ratio: auto !important;
+        margin: 0 auto !important;
+        box-shadow: none !important;
+        border-radius: 0 !important;
+        padding: 6px 8px !important;
+        gap: 6px !important;
+        overflow: hidden !important;
+        break-inside: avoid !important;
+        page-break-inside: avoid !important;
+        page-break-after: avoid !important;
+      }
+      .qpro-hdr-banner { padding: 5px 11px 6px !important; }
+      .qpro-hdr-title { font-size: 14.5px !important; }
+      .qpro-hdr-sub { font-size: 11.2px !important; }
+      .qpro-ear-badge { font-size: 10.0px !important; padding: 1px 8px !important; }
+      .qpro-hdr-meta { font-size: 10.3px !important; margin: 2px 0 3px !important; }
+      .qpro-pheno-bar { font-size: 10.3px !important; padding: 2px 8px !important; }
+      .qpro-aided-pill { font-size: 10.1px !important; }
+      .qpro-grid-3x2 { gap: 6px 8px !important; }
+      .qpro-card-f {
+        padding: 6px 9px !important;
+        font-size: 9.1px !important;
+        line-height: 1.23 !important;
+      }
+      .f-title { font-size: 10.8px !important; margin-bottom: 3px !important; }
+      .f-sec-hdr { font-size: 9.0px !important; margin: 4px 0 2px !important; }
+      .qc-row { margin-bottom: 2px !important; }
+      .f-conf-line { margin-bottom: 3px !important; }
+      .rem-strip { font-size: 8.8px !important; padding: 2px 6px !important; margin-bottom: 3px !important; }
+      .f-rec-list { padding-left: 14px !important; }
+      .f-rec-list li { margin-bottom: 2px !important; }
+      .rx-table-span2 { padding: 6px 9px !important; }
+      .rx-target-table { font-size: 8.9px !important; margin: 2px 0 !important; }
+      .rx-target-table th, .rx-target-table td { padding: 2.5px 4px !important; }
+      .rx-table-note { font-size: 8.6px !important; padding: 3px 6px !important; }
+    }
+  </style>
+</head>
+<body>
+
+  <header class="app-topbar">
+    <div class="brand-left">
+      <div class="brand-title">
+        <strong>qPRO — Quick Suprathreshold Profile</strong>
+        <span>Automated Audiogram + qCLS + qVCV Clinical Interpreter (100% Client-Side WebAssembly)</span>
+      </div>
+    </div>
+    <div class="hospital-badge">
+      <img src="assets/boys-town-logo.png" alt="Boys Town National Research Hospital">
+    </div>
+  </header>
+
+  <nav class="toolbar" aria-label="Report Controls">
+    <div class="toolbar-group">
+      <div class="view-toggle" role="group" aria-label="Sheet Mode">
+        <button type="button" id="view-diag-btn" class="active">Diagnostic Profile</button>
+        <button type="button" id="view-rx-btn">Prescription / REM Sheet</button>
+      </div>
+
+      <label for="demo-select">Case:</label>
+      <select id="demo-select"></select>
+
+      <button type="button" id="toggle-drawer-btn" class="btn-teal">Patient / CSV Input ▾</button>
+
+      <label for="ear-select">Ear:</label>
+      <select id="ear-select">
+        <option value="Unspecified">Monaural</option>
+        <option value="Right">Right (O)</option>
+        <option value="Left">Left (X)</option>
+        <option value="Both">Binaural</option>
+      </select>
+
+      <label for="orient-select">Audiogram:</label>
+      <select id="orient-select">
+        <option value="topdown">Top-Down (Clinical dB HL)</option>
+        <option value="bottomup">Bottom-Up (Loss Bars)</option>
+      </select>
+    </div>
+
+    <div class="toolbar-group">
+      <span id="wasm-status">Loading WASM…</span>
+      <button type="button" class="btn-gold" onclick="window.print()">Print / Save Landscape PDF</button>
+      <button type="button" id="export-csv-btn">Export CSV</button>
+      <button type="button" id="export-json-btn">Export JSON</button>
+      <a href="guide.html" class="btn btn-outline">Clinician Guide</a>
+    </div>
+  </nav>
+
+  <!-- Collapsible Patient Input & CSV Ingestion Drawer -->
+  <section id="data-drawer" hidden>
+    <div style="display:flex;justify-content:space-between;align-items:center;">
+      <strong style="font-size:14px;color:#14284B;">Patient Measurements &amp; Web-App CSV Import (Zero Server / 100% Local Browser Memory)</strong>
+      <button type="button" class="btn btn-teal" id="recalc-btn">Re-Compute Profile (WASM)</button>
+    </div>
+
+    <div class="drawer-grid">
+      <!-- Card 1: Metadata & Browser localStorage Bridge -->
+      <div class="drawer-card">
+        <h3>1. Patient Info &amp; Saved Browser Sessions</h3>
+        <div class="field-row">
+          <label for="inp-id">Patient ID:</label>
+          <input type="text" id="inp-id" value="HL068">
+        </div>
+        <div class="field-row">
+          <label for="inp-trans">Transducer:</label>
+          <select id="inp-trans">
+            <option value="er3a">BTNRH ER-3A Insert</option>
+            <option value="legacy">qCLS Legacy Table</option>
+            <option value="ansi">ANSI S3.6 Reference</option>
+          </select>
+        </div>
+        <div class="field-row">
+          <label for="inp-prac">Quiet Practice %:</label>
+          <input type="number" id="inp-prac" min="0" max="100" step="1" placeholder="Optional (0-100)">
+        </div>
+        <div class="field-row">
+          <label for="inp-srt">Adaptive SRT Loss:</label>
+          <input type="number" id="inp-srt" step="0.1" placeholder="Optional dB SNR override">
+        </div>
+        <div class="field-row">
+          <label for="local-qcls-sel">Saved qCLS:</label>
+          <select id="local-qcls-sel"><option value="">(Check browser localStorage)</option></select>
+        </div>
+      </div>
+
+      <!-- Card 2: Pure-Tone Audiogram (10 Bands, dB HL) -->
+      <div class="drawer-card">
+        <h3>2. Pure-Tone Audiogram (dB HL, 250–8000 Hz)</h3>
+        <div class="aud-grid" id="aud-inputs"></div>
+      </div>
+
+      <!-- Card 3: CSV File Uploads (qVCV + qCLS + Aided + Contralateral) -->
+      <div class="drawer-card">
+        <h3>3. Import qVCV &amp; qCLS Web-App CSVs</h3>
+        <div class="field-row">
+          <label for="file-qvcv">Unaided qVCV:</label>
+          <input type="file" id="file-qvcv" accept=".csv">
+        </div>
+        <div class="field-row">
+          <label for="file-qcls">qCLS ELC CSV:</label>
+          <input type="file" id="file-qcls" accept=".csv">
+        </div>
+        <div class="field-row">
+          <label for="file-aided">Aided qVCV:</label>
+          <input type="file" id="file-aided" accept=".csv">
+        </div>
+        <div class="field-row">
+          <label for="file-contra">Opposite Ear qVCV:</label>
+          <input type="file" id="file-contra" accept=".csv">
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 1-Page Landscape Clinical Report Sheet -->
+  <main class="sheet-wrap">
+    <div id="report-sheet" aria-live="polite"></div>
+  </main>
+
+  <footer class="privacy-footer">
+    <strong>Local-Only Browser Processing:</strong> All calculations execute 100% locally on your device via WebAssembly — no patient IDs, audiograms, or uploaded CSV files are ever transmitted over the internet. &nbsp;•&nbsp; Research clinical decision-support prototype.
+  </footer>
+
+  <script src="qpro_demo_cases.js"></script>
+  <script src="qpro_core.js"></script>
+  <script src="qpro_report_svg.js"></script>
+  <script>
+    (function () {
+      "use strict";
+
+      const FREQS = [250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+      const FREQ_SHORT = ["250", "500", "750", "1k", "1.5k", "2k", "3k", "4k", "6k", "8k"];
+      const CU_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
+
+      const state = {
+        listenerId: "HL068",
+        group: "Clinical",
+        ear: "Unspecified",
+        transducer: "er3a",
+        practicePc: 75,
+        measuredSrtLossDb: null,
+        audiogramHL: [50, 40, 35, 30, 30, 45, 30, 55, 50, 50],
+        elc10x10: null,
+        countsS1: Array.from({ length: 10 }, (_, i) => {
+          const r = new Array(11).fill(0); r[i] = 9; return r;
+        }),
+        countsS2: null,
+        aided: {},
+        contraSummary: null,
+        sheetMode: "diagnostic",
+        lastReport: null
+      };
+
+      /* Build 10-frequency audiogram input boxes */
+      const audGrid = document.getElementById("aud-inputs");
+      FREQ_SHORT.forEach((lbl, idx) => {
+        const div = document.createElement("div");
+        div.className = "aud-cell";
+        div.innerHTML = `<span>${lbl} Hz</span><input type="number" min="-10" max="120" step="5" data-fidx="${idx}" value="${state.audiogramHL[idx]}">`;
+        audGrid.appendChild(div);
+      });
+
+      function syncInputsFromState() {
+        document.getElementById("inp-id").value = state.listenerId;
+        document.getElementById("ear-select").value = state.ear;
+        document.getElementById("inp-trans").value = state.transducer;
+        document.getElementById("inp-prac").value = state.practicePc !== null ? state.practicePc : "";
+        document.getElementById("inp-srt").value = state.measuredSrtLossDb !== null ? state.measuredSrtLossDb : "";
+        audGrid.querySelectorAll("input").forEach(inp => {
+          const idx = Number(inp.dataset.fidx);
+          inp.value = state.audiogramHL[idx];
+        });
+      }
+
+      function readInputsToState() {
+        state.listenerId = document.getElementById("inp-id").value.trim() || "Patient";
+        state.ear = document.getElementById("ear-select").value;
+        state.transducer = document.getElementById("inp-trans").value;
+        const pr = document.getElementById("inp-prac").value.trim();
+        state.practicePc = pr === "" ? null : Number(pr);
+        const srt = document.getElementById("inp-srt").value.trim();
+        state.measuredSrtLossDb = srt === "" ? null : Number(srt);
+        audGrid.querySelectorAll("input").forEach(inp => {
+          state.audiogramHL[Number(inp.dataset.fidx)] = Number(inp.value || 0);
+        });
+      }
+
+      /* Populate Demo Case selector (default to Case 4 — HL068) */
+      const demoSel = document.getElementById("demo-select");
+      const demos = (window.QPRO_DATA && window.QPRO_DATA.demos) ? window.QPRO_DATA.demos : [];
+      demos.forEach((d, idx) => {
+        const opt = document.createElement("option");
+        opt.value = String(idx);
+        opt.textContent = d.label;
+        demoSel.appendChild(opt);
+      });
+
+      function loadDemoIndex(idx) {
+        const d = demos[idx];
+        if (!d) return;
+        state.listenerId = d.id;
+        state.group = d.group;
+        state.ear = d.ear || "Unspecified";
+        state.transducer = d.transducer || "er3a";
+        state.practicePc = d.practice_pc;
+        state.measuredSrtLossDb = null;
+        state.audiogramHL = d.audiogram_hl.slice();
+        state.elc10x10 = d.elc_10x10 ? d.elc_10x10.map(r => r.slice()) : null;
+        state.countsS1 = d.counts_s1.map(r => r.slice());
+        state.countsS2 = d.counts_s2 ? d.counts_s2.map(r => r.slice()) : null;
+        state.aided = d.aided ? JSON.parse(JSON.stringify(d.aided)) : {};
+        state.contraSummary = null;
+        syncInputsFromState();
+        recomputeAndRender();
+      }
+
+      /* Populate Saved qCLS Browser Sessions from localStorage ('qcls_sessions') */
+      function refreshLocalQclsSessions() {
+        const sel = document.getElementById("local-qcls-sel");
+        try {
+          const raw = JSON.parse(localStorage.getItem("qcls_sessions") || "[]");
+          sel.innerHTML = `<option value="">${raw.length} saved in browser</option>` +
+            raw.map((r, i) => `<option value="${i}">${r.id} (${(r.ear || "?")[0].toUpperCase()}) ${(r.when || "").slice(0, 16).replace("T", " ")}</option>`).join("");
+          sel.onchange = () => {
+            if (sel.value === "") return;
+            const rec = raw[Number(sel.value)];
+            if (!rec || !rec.report || !rec.report.mu) return;
+            /* qCLS stores 9 bands (250..6000 Hz) x 10 CU boundaries in report.mu */
+            const elc10 = Array.from({ length: 10 }, () => new Array(10).fill(null));
+            for (let b = 0; b < 9; b++) {
+              for (let c = 0; c < 10; c++) elc10[b][c] = Number(rec.report.mu[b * 10 + c]);
+            }
+            state.elc10x10 = elc10;
+            if (rec.id) state.listenerId = rec.id;
+            if (rec.ear) {
+              const e0 = rec.ear.toLowerCase();
+              state.ear = e0.startsWith("r") ? "Right" : (e0.startsWith("l") ? "Left" : "Both");
+            }
+            if (Array.isArray(rec.audiogramSPL) && rec.audiogramSPL.length >= 9) {
+              const retspl = window.QPRO_DATA.norms.retspl[state.transducer] || window.QPRO_DATA.norms.retspl.er3a;
+              for (let b = 0; b < 9; b++) {
+                if (Number.isFinite(rec.audiogramSPL[b])) {
+                  state.audiogramHL[b] = Math.round(rec.audiogramSPL[b] - retspl[b]);
+                }
+              }
+              state.audiogramHL[9] = state.audiogramHL[8];
+            }
+            syncInputsFromState();
+            recomputeAndRender();
+          };
+        } catch (_) {}
+      }
+
+      /* CSV Parsers */
+      function parseCsvRows(text) {
+        const lines = text.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#"));
+        if (lines.length < 2) return [];
+        const headers = lines[0].split(",").map(s => s.trim());
+        return lines.slice(1).map(line => {
+          const cols = line.split(",").map(s => s.trim());
+          const obj = {};
+          headers.forEach((h, i) => (obj[h] = cols[i] ?? ""));
+          return obj;
+        });
+      }
+
+      function parseQvcvCsvText(text) {
+        const rows = parseCsvRows(text);
+        const counts = Array.from({ length: 10 }, () => new Array(11).fill(0));
+        let pracTot = 0, pracHit = 0;
+        const stims = window.QProEngine.STIM_CONS;
+        const disps = window.QProEngine.DISP_CONS;
+        for (const r of rows) {
+          const ph = (r.Phase || "").toLowerCase();
+          const tc = (r["Target Consonant"] || r.Target || r.Consonant || "").toUpperCase();
+          let ur = (r["User Response"] || r.Response || "").toUpperCase();
+          if (ur === "OTHER" || ur === "UNK") ur = "???";
+          const si = stims.indexOf(tc);
+          const ri = disps.indexOf(ur);
+          if (ph.includes("practice")) {
+            if (si >= 0) { pracTot++; if (si === ri) pracHit++; }
+          } else if (si >= 0 && ri >= 0) {
+            counts[si][ri] += 1;
+          }
+        }
+        return {
+          counts,
+          practicePc: pracTot >= 5 ? Math.round((100 * pracHit) / pracTot) : null
+        };
+      }
+
+      function parseQclsElcCsvText(text) {
+        const rows = parseCsvRows(text);
+        const elc = Array.from({ length: 10 }, () => new Array(10).fill(null));
+        for (const r of rows) {
+          const freq = parseFloat(r.Freq_Hz || r.Freq || "0");
+          const cu = Math.round(parseFloat(r.CU || "0"));
+          const lvl = parseFloat(r.Level_dB_SPL || r.Level || "NaN");
+          const fi = FREQS.findIndex(f0 => Math.abs(f0 - freq) / f0 < 0.04);
+          const ci = CU_LEVELS.indexOf(cu);
+          if (fi >= 0 && ci >= 0 && Number.isFinite(lvl)) elc[fi][ci] = lvl;
+        }
+        return elc;
+      }
+
+      function inferMetaFromFilename(fname) {
+        const stem = fname.replace(/\.csv$/i, "");
+        const parts = stem.split("_");
+        for (const p of parts) {
+          const u = p.toUpperCase();
+          if (u === "R" || u === "RIGHT") state.ear = "Right";
+          else if (u === "L" || u === "LEFT") state.ear = "Left";
+        }
+        if (parts.length >= 2 && (parts[0].toUpperCase() === "QVCV" || parts[0].toUpperCase() === "QCLS")) {
+          const cand = parts[1] === "ELC" ? parts[2] : parts[1];
+          if (cand) state.listenerId = cand;
+        }
+      }
+
+      function recomputeAndRender() {
+        const rep = window.QProEngine.evaluate({
+          listenerId: state.listenerId,
+          group: state.group,
+          ear: state.ear,
+          transducer: state.transducer,
+          practicePc: state.practicePc,
+          measuredSrtLossDb: state.measuredSrtLossDb,
+          audiogramHL: state.audiogramHL,
+          elc10x10: state.elc10x10,
+          countsS1: state.countsS1,
+          countsS2: state.countsS2,
+          aided: state.aided,
+          contraSummary: state.contraSummary,
+          nBoot: 36
+        });
+        state.lastReport = rep;
+        renderCurrentMode();
+        document.getElementById("wasm-status").textContent = `WASM: ${rep.elapsedMs.toFixed(1)} ms`;
+      }
+
+      function renderCurrentMode() {
+        if (!state.lastReport) return;
+        const container = document.getElementById("report-sheet");
+        const topDown = document.getElementById("orient-select").value === "topdown";
+        if (state.sheetMode === "prescription") {
+          window.QProReportView.renderPrescriptionSheet(container, state.lastReport);
+        } else {
+          window.QProReportView.renderReportSheet(
+            container,
+            state.lastReport,
+            window.QPRO_DATA ? window.QPRO_DATA.norms : null,
+            { audiogramTopDown: topDown }
+          );
+        }
+      }
+
+      /* Wire UI Events */
+      const btnDiag = document.getElementById("view-diag-btn");
+      const btnRx   = document.getElementById("view-rx-btn");
+      btnDiag.onclick = () => {
+        state.sheetMode = "diagnostic";
+        btnDiag.classList.add("active");
+        btnRx.classList.remove("active");
+        renderCurrentMode();
+      };
+      btnRx.onclick = () => {
+        state.sheetMode = "prescription";
+        btnRx.classList.add("active");
+        btnDiag.classList.remove("active");
+        renderCurrentMode();
+      };
+      document.getElementById("toggle-drawer-btn").onclick = () => {
+        const dr = document.getElementById("data-drawer");
+        dr.hidden = !dr.hidden;
+      };
+      demoSel.onchange = () => loadDemoIndex(Number(demoSel.value));
+      document.getElementById("ear-select").onchange = () => {
+        state.ear = document.getElementById("ear-select").value;
+        recomputeAndRender();
+      };
+      document.getElementById("orient-select").onchange = () => recomputeAndRender();
+      document.getElementById("recalc-btn").onclick = () => {
+        readInputsToState();
+        state.group = "Clinical";
+        recomputeAndRender();
+      };
+      audGrid.addEventListener("change", () => {
+        readInputsToState();
+        recomputeAndRender();
+      });
+
+      document.getElementById("file-qvcv").onchange = async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        inferMetaFromFilename(f.name);
+        const parsed = parseQvcvCsvText(await f.text());
+        state.countsS1 = parsed.counts;
+        state.countsS2 = null;
+        state.aided = {};
+        state.group = "Clinical";
+        if (parsed.practicePc !== null) state.practicePc = parsed.practicePc;
+        syncInputsFromState();
+        recomputeAndRender();
+      };
+
+      document.getElementById("file-qcls").onchange = async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        inferMetaFromFilename(f.name);
+        state.elc10x10 = parseQclsElcCsvText(await f.text());
+        syncInputsFromState();
+        recomputeAndRender();
+      };
+
+      document.getElementById("file-aided").onchange = async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        const parsed = parseQvcvCsvText(await f.text());
+        state.aided["Aided Run"] = parsed.counts;
+        recomputeAndRender();
+      };
+
+      document.getElementById("file-contra").onchange = async (e) => {
+        const f = e.target.files?.[0];
+        if (!f) return;
+        const parsed = parseQvcvCsvText(await f.text());
+        const contraRep = window.QProEngine.evaluate({
+          listenerId: "Contra",
+          audiogramHL: state.audiogramHL,
+          elc10x10: null,
+          countsS1: parsed.counts,
+          nBoot: 12
+        });
+        state.contraSummary = {
+          pta124: contraRep.pta124,
+          empPc: contraRep.empPcPooled,
+          dNeu: contraRep.neuralDeficitDb
+        };
+        recomputeAndRender();
+      };
+
+      /* Exports */
+      document.getElementById("export-json-btn").onclick = () => {
+        if (!state.lastReport) return;
+        const blob = new Blob([JSON.stringify(state.lastReport, null, 2)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `qPRO_${state.lastReport.listenerId}_${state.lastReport.ear}.json`;
+        a.click();
+      };
+
+      document.getElementById("export-csv-btn").onclick = () => {
+        const r = state.lastReport;
+        if (!r) return;
+        const rx = r.prescription;
+        const fTags = ["250","500","750","1k","1_5k","2k","3k","4k","6k","8k"];
+        const cols = [
+          "listener_id","ear","phenotype","pta_124_db_hl","hf_pta_db_hl","qvcv_pct",
+          "total_snr_loss_db","snr_loss_se_db","inaudibility_db","recruitment_db","clarity_loss_db",
+          "hf_recruitment_db","hf_smearing","voicing_pct_nh","manner_pct_nh","place_pct_nh",
+          "rx_amp_indicated","rx_pred_aided_qvcv_pct","rx_vent","rx_wdrc_speed","rx_directionality",
+          ...fTags.map(f => `rear50_${f}`),
+          ...fTags.map(f => `rear65_${f}`),
+          ...fTags.map(f => `rear80_${f}`),
+          ...fTags.map(f => `mpo_${f}`),
+          ...fTags.map(f => `ig65_${f}`),
+          ...fTags.map(f => `cr_${f}`)
+        ];
+        const vals = [
+          r.listenerId, r.ear, `"${r.phenotype}"`, r.pta124, r.hfPta, r.empPcPooled,
+          r.totalDeficitDb, r.totalDeficitSeDb, r.audibilityDeficitDb, r.ohcDeficitDb, r.neuralDeficitDb,
+          r.hfOhcDb, r.hfSmearingLabel, r.rtrVoicingPct, r.rtrMannerPct, r.rtrPlacePct,
+          rx.ampIndicated ? 1 : 0, rx.predAidedQvcvPct,
+          `"${rx.ventLabel}"`, `"${rx.wdrcSpeedLabel}"`, `"${rx.directionalityLabel}"`,
+          ...rx.rear50Spl, ...rx.rear65Spl, ...rx.rear80Spl,
+          ...rx.mpoSpl, ...rx.ig65Db, ...rx.cr
+        ];
+        const csv = cols.join(",") + "\n" + vals.join(",") + "\n";
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
+        a.download = `qPRO_${r.listenerId}_${r.ear}.csv`;
+        a.click();
+      };
+
+      /* Boot WebAssembly Engine */
+      window.QProEngine.init().then(() => {
+        refreshLocalQclsSessions();
+        const defIdx = Math.max(0, demos.findIndex(d => d.id === "HL068"));
+        demoSel.value = String(defIdx);
+        loadDemoIndex(defIdx);
+      }).catch(err => {
+        document.getElementById("wasm-status").textContent = "WASM Error: " + err.message;
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -111,8 +111,9 @@
       }
     }
 
-    const s1 = params.countsS1;
-    const s2 = params.countsS2 || null;
+    const explicitHasQvcv = params.hasQvcv === undefined ? null : Boolean(params.hasQvcv);
+    const s1 = explicitHasQvcv === false ? null : params.countsS1;
+    const s2 = explicitHasQvcv === false ? null : (params.countsS2 || null);
     const countsTot = Array.from({ length: 10 }, () => new Array(11).fill(0));
     let s1Sum = 0, s1Diag = 0, s2Sum = 0, s2Diag = 0;
     for (let i = 0; i < 10; i++) {
@@ -131,13 +132,13 @@
     const transMap = { er3a: 0, legacy: 1, ansi: 2 };
     inF64[221] = practicePc;
     inF64[222] = transMap[params.transducer || "er3a"] ?? 0;
-    inF64[223] = params.nBoot ?? 36;
+    inF64[223] = explicitHasQvcv === false ? 0 : (params.nBoot ?? 36);
     inF64[224] = params.seed ?? 20261116;
-    inF64[225] = (params.measuredSrtLossDb !== null && params.measuredSrtLossDb !== undefined && params.measuredSrtLossDb !== "")
+    inF64[225] = (explicitHasQvcv !== false && params.measuredSrtLossDb !== null && params.measuredSrtLossDb !== undefined && params.measuredSrtLossDb !== "")
       ? Number(params.measuredSrtLossDb) : -999.0;
-    inF64[226] = (params.measuredSrtSeDb !== null && params.measuredSrtSeDb !== undefined && params.measuredSrtSeDb !== "")
+    inF64[226] = (explicitHasQvcv !== false && params.measuredSrtSeDb !== null && params.measuredSrtSeDb !== undefined && params.measuredSrtSeDb !== "")
       ? Number(params.measuredSrtSeDb) : -999.0;
-    const obsSnr = Array.isArray(params.obsSnrPerCons) && params.obsSnrPerCons.length === 10
+    const obsSnr = (explicitHasQvcv !== false && Array.isArray(params.obsSnrPerCons) && params.obsSnrPerCons.length === 10)
       ? params.obsSnrPerCons : null;
     inF64[227] = obsSnr ? 1.0 : 0.0;
     if (obsSnr) {
@@ -260,12 +261,27 @@
     }
     confPairs.sort((a, b) => (b.pct - a.pct) || (b.count - a.count));
 
+    const hasQvcv = explicitHasQvcv !== null ? explicitHasQvcv : (nTrials > 0);
+    const hasAudiogram = params.hasAudiogram === undefined ? true : Boolean(params.hasAudiogram);
+    const audiogramEstimatedFromQcls = Boolean(params.audiogramEstimatedFromQcls);
+
     /* Quality Checks */
     const qcChecks = [];
+    if (!hasAudiogram) {
+      qcChecks.push([
+        "WARN",
+        "Pure-Tone Audiogram",
+        audiogramEstimatedFromQcls
+          ? "Provisional thresholds estimated from qCLS CU 5 − RETSPL — enter measured pure-tone dB HL to finalize."
+          : "Not yet entered — enter pure-tone thresholds (250–8000 Hz) or import qVCV/qCLS."
+      ]);
+    }
     if (!hasQcls) {
       qcChecks.push(["WARN", "qCLS Loudness Test", "Not provided — recruitment estimated from audiogram average."]);
     } else if (!qclsValid) {
       qcChecks.push(["ALERT", "qCLS Loudness Test", "Irregular loudness contour (CU 5 vs. CU 50) — check calibration & repeat qCLS."]);
+    } else if (!hasAudiogram && audiogramEstimatedFromQcls) {
+      qcChecks.push(["PASS", "qCLS Loudness Test", "Valid 5–50 CU contours imported (seeding provisional thresholds until audiogram is entered)."]);
     } else if (cu5Diff !== null) {
       if (Math.abs(cu5Diff) <= 10.0) {
         qcChecks.push(["PASS", "Audiogram vs. qCLS Softest (CU 5)", `Agrees within ${cu5Diff >= 0 ? "+" : ""}${cu5Diff.toFixed(1)} dB across frequencies.`]);
@@ -286,7 +302,9 @@
       }
     }
 
-    if (empPcS2 !== null) {
+    if (!hasQvcv) {
+      qcChecks.push(["WARN", "qVCV Speech-in-Noise Test", "Not yet imported — clarity loss & confusion matrix pending qVCV CSV; peripheral & qPRO-Rx targets shown."]);
+    } else if (empPcS2 !== null) {
       if (empPcS1Eq !== null && empPcS2Eq !== null) {
         const dSrt = Math.abs(Number(params.srtLossS1Db) - Number(params.srtLossS2Db));
         qcChecks.push([dSrt <= 2.5 ? "PASS" : "WARN", "Adaptive Test–Retest & '???' Rate", `SRT Loss ${Number(params.srtLossS1Db).toFixed(1)} / ${Number(params.srtLossS2Db).toFixed(1)} dB (|Δ|=${dSrt.toFixed(1)} dB); '???' used ${unkPct.toFixed(1)}%.`]);
@@ -300,7 +318,7 @@
     }
 
     let asymFlag = false;
-    if (params.contraSummary) {
+    if (hasQvcv && params.contraSummary) {
       const contraCmpPc = params.contraSummary.comparablePc ?? params.contraSummary.empPc;
       const dPta = Math.abs(pta124 - params.contraSummary.pta124);
       const dPc  = Math.abs(baseComparablePc - contraCmpPc);
@@ -318,10 +336,21 @@
     const recs = [];
     const maxAud = Math.max(...audHL);
     const ohcElev = dOhc > norms.p90_ohc_db || hfOhc >= 15.0;
-    const neuElev = dNeu > norms.p90_neural_db && (dNeu - 1.28 * seTot) > 0.3;
+    const neuElev = hasQvcv && (dNeu > norms.p90_neural_db && (dNeu - 1.28 * seTot) > 0.3);
     const smearLbl = smearingLabel(hfErb);
 
-    if (phenoIdx === 0) {
+    if (!hasQvcv) {
+      if (pta124 <= 20.0 && maxAud <= 25.0) {
+        recs.push("Amplification Gain: Conventional hearing-aid gain is NOT indicated from thresholds alone (<= 20 dB HL); import Unaided qVCV CSV to check for hidden suprathreshold clarity loss.");
+      } else {
+        recs.push(`Amplification Gain: Peripheral profile indicates +${dAud.toFixed(1)} dB audibility SNR loss recoverable with frequency-specific gain (HF-PTA = ${hfPta.toFixed(0)} dB HL).`);
+      }
+      if (ohcElev && dynHf !== null) {
+        const mpoStr = cu50Hf !== null ? ` <= ${cu50Hf.toFixed(0)} dB SPL` : "";
+        recs.push(`Compression & MPO (UCL): Steep HF loudness growth (HF dynamic range = ${dynHf.toFixed(0)} dB; ${smearLbl.toLowerCase()} spectral smearing). Cap HF MPO${mpoStr} (CU 50) and restrain <1 kHz gain.`);
+      }
+      recs.push("Next Step: Import Unaided qVCV CSV to measure speech-in-noise clarity loss and consonant confusion patterns.");
+    } else if (phenoIdx === 0) {
       recs.push("Amplification: Not indicated. Threshold sensitivity, loudness growth, and speech-in-noise clarity are all within Normal-Hearing limits.");
       recs.push("Counseling & Follow-Up: Reassure patient; retain report as baseline for future comparison.");
     } else {
@@ -404,19 +433,29 @@
       reur65Spl: Array.from(outF64.slice(405, 415)).map(v => Math.round(v))
     };
 
+    const phenoTitle = hasQvcv
+      ? pheno.title
+      : ((hasQcls || hasAudiogram)
+          ? "PERIPHERAL PROFILE ONLY — IMPORT qVCV TO MEASURE SPEECH CLARITY"
+          : "AWAITING PATIENT INPUTS — ENTER AUDIOGRAM & IMPORT CSVs");
+    const phenoColor = hasQvcv ? pheno.color : "#475569";
+
     return {
       listenerId: params.listenerId || "Patient",
       ear: params.ear || "Unspecified",
       group: params.group || "Clinical",
       transducer: params.transducer || "er3a",
       nTrials,
+      hasAudiogram,
+      audiogramEstimatedFromQcls,
+      hasQvcv,
       hasQcls,
       qclsValid,
       pta124: Number(pta124.toFixed(1)),
       lfPta: Number(lfPta.toFixed(1)),
       hfPta: Number(hfPta.toFixed(1)),
       isAdaptiveQvcv,
-      qvcvMode: params.qvcvMode || (isAdaptiveQvcv ? "adaptive" : "standard"),
+      qvcvMode: hasQvcv ? (params.qvcvMode || (isAdaptiveQvcv ? "adaptive" : "standard")) : "pending",
       meanAdaptiveSnrDb: (params.meanAdaptiveSnrDb !== null && params.meanAdaptiveSnrDb !== undefined && Number.isFinite(Number(params.meanAdaptiveSnrDb)))
         ? Number(Number(params.meanAdaptiveSnrDb).toFixed(1)) : null,
       eqFixedPc: Number(eqFixedPc.toFixed(1)),
@@ -437,17 +476,17 @@
       ohcDeficitDb: Number(dOhc.toFixed(2)),
       neuralDeficitDb: Number(dNeu.toFixed(2)),
       neuralSeDb: Number(seTot.toFixed(2)),
-      snrLossSeverity: snrSeverity(dTot, norms.p90_total_db),
+      snrLossSeverity: hasQvcv ? snrSeverity(dTot, norms.p90_total_db) : "Pending qVCV",
       hfOhcDb: Number(hfOhc.toFixed(1)),
       hfErbMult: Number(hfErb.toFixed(2)),
       hfSmearingLabel: smearLbl,
       dynRangeHfDb: dynHf !== null ? Number(dynHf.toFixed(1)) : null,
       slopeCuPerDb: slopeCuDb !== null ? Number(slopeCuDb.toFixed(2)) : null,
-      rtrVoicingPct: Math.round(outF64[29]),
-      rtrMannerPct: Math.round(outF64[30]),
-      rtrPlacePct: Math.round(outF64[31]),
-      phenotype: pheno.title,
-      phenotypeColor: pheno.color,
+      rtrVoicingPct: hasQvcv ? Math.round(outF64[29]) : null,
+      rtrMannerPct: hasQvcv ? Math.round(outF64[30]) : null,
+      rtrPlacePct: hasQvcv ? Math.round(outF64[31]) : null,
+      phenotype: phenoTitle,
+      phenotypeColor: phenoColor,
       qcChecks,
       topConfusions: confPairs.slice(0, 6),
       remTargets,
@@ -469,48 +508,181 @@
   const REF_SNR_DB = [18.0, 4.0, 3.0, 0.0, 15.0, 0.0, 0.0, 0.0, 18.0, 0.0];
   const AUD_FREQS_HZ = [250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
   const CU_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
+  const RETSPL_BY_TRANSDUCER = {
+    er3a:   [17.50, 9.50, 6.00, 5.50, 9.50, 11.50, 13.00, 15.00, 16.00, 15.50],
+    legacy: [30.00, 19.00, 12.00, 10.00, 9.00, 15.00, 15.50, 13.00, 13.00, 14.00],
+    ansi:   [18.00, 11.00, 8.50, 7.50, 7.50, 9.00, 10.00, 9.50, 15.50, 13.00]
+  };
+
+  /* RFC-4180 CSV line splitter supporting quoted fields and escaped "" quotes */
+  function splitCsvLine(line) {
+    const out = [];
+    let cur = "";
+    let inQuotes = false;
+    for (let i = 0; i < line.length; i++) {
+      const ch = line[i];
+      if (inQuotes) {
+        if (ch === '"') {
+          if (i + 1 < line.length && line[i + 1] === '"') {
+            cur += '"';
+            i++;
+          } else {
+            inQuotes = false;
+          }
+        } else {
+          cur += ch;
+        }
+      } else if (ch === '"') {
+        inQuotes = true;
+      } else if (ch === ",") {
+        out.push(cur.trim());
+        cur = "";
+      } else {
+        cur += ch;
+      }
+    }
+    out.push(cur.trim());
+    return out;
+  }
+
+  function csvEscape(val) {
+    if (val === null || val === undefined) return "";
+    const s = String(val);
+    if (/[",\r\n]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+  }
 
   function parseCsvRows(text) {
     const lines = String(text || "").split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#"));
     if (lines.length < 2) return [];
-    const headers = lines[0].split(",").map(s => s.trim());
+    const headers = splitCsvLine(lines[0]);
     return lines.slice(1).map(line => {
-      const cols = line.split(",").map(s => s.trim());
+      const cols = splitCsvLine(line);
       const obj = {};
       headers.forEach((h, i) => { obj[h] = cols[i] ?? ""; });
       return obj;
     });
   }
 
+  /* Parse participant ID, ear, aided/adaptive flags from filenames, preserving
+   * multi-underscore IDs (e.g. BT_042) and stripping browser duplicate suffixes like " (1)" */
   function inferFileMeta(fname) {
-    const stem = String(fname || "").replace(/\.csv$/i, "");
-    const parts = stem.split("_").filter(Boolean);
+    const baseName = String(fname || "").replace(/^.*[\\/]/, "");
+    const stem = baseName
+      .replace(/\.csv$/i, "")
+      .replace(/\s*\(\d+\)$/, "")
+      .trim();
+    const withoutPrefix = stem.replace(/^(?:qVCV_|qCLS_ELC_|qCLS_TBT_|qCLS_|qPRO_)/i, "");
+    const parts = withoutPrefix.split("_").filter(Boolean);
+
     let ear = null;
-    let participantId = null;
     let isAidedName = false;
     let isAdaptiveName = false;
-    const reserved = new Set(["QVCV", "QCLS", "ELC", "TBT", "AIDED", "UNAIDED", "ADP50", "ADP100", "L", "R", "B", "LEFT", "RIGHT", "BOTH"]);
+    const suffixTags = new Set(["AIDED", "UNAIDED", "ADP50", "ADP100", "ELC", "TBT"]);
+    const earMap = { R: "Right", RIGHT: "Right", L: "Left", LEFT: "Left", B: "Both", BOTH: "Both" };
 
-    for (let k = 0; k < parts.length; k++) {
-      const u = parts[k].toUpperCase();
-      if (u === "R" || u === "RIGHT") ear = "Right";
-      else if (u === "L" || u === "LEFT") ear = "Left";
-      else if (u === "B" || u === "BOTH") ear = "Both";
-      else if (u === "AIDED") isAidedName = true;
-      else if (u === "ADP50" || u === "ADP100") isAdaptiveName = true;
-    }
-    for (let k = 1; k < parts.length; k++) {
-      const p = parts[k];
-      const u = p.toUpperCase();
-      if (!reserved.has(u) && !/^\d{8}$/.test(p) && !/^\d{4}$/.test(p)) {
-        participantId = p;
+    let endIdx = parts.length;
+    while (endIdx > 1) {
+      const tok = parts[endIdx - 1];
+      const u = tok.toUpperCase();
+      if (/^\d{8}$/.test(tok) || /^\d{4,6}$/.test(tok)) {
+        endIdx--;
+      } else if (suffixTags.has(u)) {
+        if (u === "AIDED") isAidedName = true;
+        if (u === "ADP50" || u === "ADP100") isAdaptiveName = true;
+        endIdx--;
+      } else if (earMap[u]) {
+        if (!ear) ear = earMap[u];
+        endIdx--;
+        break;
+      } else {
         break;
       }
     }
-    return { participantId, ear, isAidedName, isAdaptiveName };
+
+    /* Also scan middle tokens in case ear appeared before AIDED/ADP50 */
+    while (endIdx > 1) {
+      const u = parts[endIdx - 1].toUpperCase();
+      if (suffixTags.has(u)) {
+        if (u === "AIDED") isAidedName = true;
+        if (u === "ADP50" || u === "ADP100") isAdaptiveName = true;
+        endIdx--;
+      } else if (earMap[u]) {
+        if (!ear) ear = earMap[u];
+        endIdx--;
+      } else {
+        break;
+      }
+    }
+
+    const participantId = endIdx > 0 ? parts.slice(0, endIdx).join("_") : null;
+    return { participantId: participantId || null, ear, isAidedName, isAdaptiveName };
   }
 
-  /* Parse both Standard Fixed-SNR and Adaptive-SNR qVCV CSVs */
+  /* Parse semicolon-delimited Audiogram_Hz_dBHL column from qVCV 17-column CSV
+   * (e.g. "250:15;500:20;750:20;1000:25;1500:30;2000:35;3000:45;4000:50;6000:55;8000:60") */
+  function parseEmbeddedAudiogram10(audStr) {
+    const s = String(audStr || "").trim();
+    if (!s) return null;
+    const vals = new Array(10).fill(null);
+    let nValid = 0;
+    for (const pair of s.split(";")) {
+      const [fRaw, hlRaw] = pair.split(":");
+      const fHz = parseFloat(fRaw ?? "");
+      const hl = parseFloat(hlRaw ?? "");
+      if (!Number.isFinite(fHz) || !Number.isFinite(hl)) continue;
+      const fi = AUD_FREQS_HZ.findIndex(f0 => Math.abs(f0 - fHz) / f0 < 0.04);
+      if (fi >= 0) {
+        vals[fi] = Math.max(-10, Math.min(120, hl));
+        nValid++;
+      }
+    }
+    if (nValid < 4) return null;
+    /* Nearest/linear fill for any missing inter-octave band */
+    let lastKnown = vals.find(v => v !== null) ?? 20;
+    for (let i = 0; i < 10; i++) {
+      if (vals[i] === null) {
+        let nextIdx = -1;
+        for (let k = i + 1; k < 10; k++) {
+          if (vals[k] !== null) { nextIdx = k; break; }
+        }
+        if (i > 0 && nextIdx > i) {
+          const prevVal = vals[i - 1];
+          vals[i] = Math.round(prevVal + ((vals[nextIdx] - prevVal) * 1.0) / (nextIdx - (i - 1)));
+        } else {
+          vals[i] = lastKnown;
+        }
+      } else {
+        lastKnown = vals[i];
+      }
+    }
+    return vals;
+  }
+
+  /* Derive provisional 10-band pure-tone audiogram (dB HL) from qCLS CU 5 - RETSPL */
+  function deriveAudiogramFromQclsElc(elc10x10, transducer = "er3a") {
+    if (!Array.isArray(elc10x10) || elc10x10.length < 9) return null;
+    const retspl = RETSPL_BY_TRANSDUCER[transducer] || RETSPL_BY_TRANSDUCER.er3a;
+    const out = new Array(10).fill(null);
+    let nValid = 0;
+    for (let f = 0; f < 10; f++) {
+      const cu5 = elc10x10[f] ? elc10x10[f][0] : null;
+      if (cu5 !== null && cu5 !== undefined && Number.isFinite(Number(cu5)) && Number(cu5) > -500) {
+        const estHl = Math.round((Number(cu5) - retspl[f]) / 5.0) * 5.0;
+        out[f] = Math.max(-10, Math.min(115, estHl));
+        nValid++;
+      }
+    }
+    if (nValid < 4) return null;
+    let carry = out.find(v => v !== null) ?? 20;
+    for (let f = 0; f < 10; f++) {
+      if (out[f] === null) out[f] = carry;
+      else carry = out[f];
+    }
+    return out;
+  }
+
+  /* Parse both Standard Fixed-SNR and Adaptive-SNR qVCV CSVs (including 17-column format) */
   function parseQvcvCsv(text, filename = "") {
     const rows = parseCsvRows(text);
     const meta = inferFileMeta(filename);
@@ -525,8 +697,10 @@
     let condStr = "";
     let earStr = "";
     let finalLossDb = null;
+    let finalSeDbExplicit = null;
     let lastRunningLossDb = null;
     let lastRunningSeDb = null;
+    let embeddedAud = null;
 
     for (const r of rows) {
       const ph = (r.Phase || "").toLowerCase();
@@ -539,6 +713,9 @@
       if (r.Mode && !modeStr) modeStr = r.Mode.trim();
       if (r.Condition && !condStr) condStr = r.Condition.trim();
       if (r.Ear && !earStr) earStr = r.Ear.trim();
+      if (!embeddedAud && r.Audiogram_Hz_dBHL) {
+        embeddedAud = parseEmbeddedAudiogram10(r.Audiogram_Hz_dBHL);
+      }
 
       if (ph.includes("practice")) {
         if (si >= 0) { pracTot++; if (si === ri) pracHit++; }
@@ -556,6 +733,8 @@
         }
         const fLoss = parseFloat(r.Final_SNR_Loss_dB ?? "");
         if (Number.isFinite(fLoss)) finalLossDb = fLoss;
+        const fSe = parseFloat(r.Final_SE_dB ?? "");
+        if (Number.isFinite(fSe) && fSe > 0) finalSeDbExplicit = fSe;
         const rLoss = parseFloat(r.Running_SNR_Loss_dB ?? "");
         if (Number.isFinite(rLoss)) lastRunningLossDb = rLoss;
         const rSe = parseFloat(r.Running_SE_dB ?? "");
@@ -570,11 +749,12 @@
       finalLossDb !== null;
 
     const resolvedLossDb = finalLossDb !== null ? finalLossDb : (isAdaptive ? lastRunningLossDb : null);
+    const resolvedSeDb = finalSeDbExplicit !== null ? finalSeDbExplicit : (isAdaptive ? lastRunningSeDb : null);
     const meanSnrDb = snrAllCnt > 0 ? (snrAllSum / snrAllCnt) : null;
 
     let obsSnrPerCons = null;
     if (isAdaptive && snrAllCnt > 0) {
-      /* Fill per-consonant mean presented SNR; fallback to REF_SNR_DB - resolvedLossDb if any consonant had 0 trials */
+      /* Fill per-consonant mean presented SNR; fallback to REF_SNR_DB + resolvedLossDb if any consonant had 0 trials */
       const shiftEst = resolvedLossDb !== null ? resolvedLossDb : 0.0;
       obsSnrPerCons = STIM_CONS.map((_, c) =>
         snrCnt[c] > 0 ? (snrSum[c] / snrCnt[c]) : (REF_SNR_DB[c] + shiftEst)
@@ -601,10 +781,11 @@
       nTrials: gradedTot,
       counts,
       practicePc: pracTot >= 5 ? Math.round((100 * pracHit) / pracTot) : null,
+      audiogramHL: embeddedAud,
       obsSnrPerCons,
       meanSnrDb,
       finalSnrLossDb: resolvedLossDb,
-      finalSeDb: isAdaptive ? lastRunningSeDb : null
+      finalSeDb: resolvedSeDb
     };
   }
 
@@ -614,6 +795,14 @@
     if (valid.length === 0) return null;
     const r1 = valid[0];
     const r2 = valid.length >= 2 ? valid[1] : null;
+
+    const idMismatch = Boolean(
+      r1 && r2 && r1.participantId && r2.participantId &&
+      r1.participantId.toUpperCase() !== r2.participantId.toUpperCase()
+    );
+    const earMismatch = Boolean(
+      r1 && r2 && r1.ear && r2.ear && r1.ear !== r2.ear
+    );
 
     const pracVals = valid.map(v => v.practicePc).filter(v => v !== null && Number.isFinite(v));
     const practicePc = pracVals.length > 0
@@ -663,6 +852,9 @@
     return {
       participantId: r1.participantId || (r2 ? r2.participantId : null),
       ear: r1.ear || (r2 ? r2.ear : null),
+      idMismatch,
+      earMismatch,
+      audiogramHL: r1.audiogramHL || (r2 ? r2.audiogramHL : null),
       isAdaptive,
       qvcvMode: r1.mode,
       countsS1: r1.counts,
@@ -696,25 +888,231 @@
     };
   }
 
-  function formatExportFilename(listenerId, ear, ext, dateYmdOverride = null) {
+  /* Standardized export filename:
+   * - Live downloads (no dateYmdOverride): qPRO_[ID]_[L|R|B|M]_[YYYYMMDD]_[HHMM].[ext]
+   * - Explicit dateYmdOverride + timeHmOverride: qPRO_[ID]_[Ear]_[YYYYMMDD]_[HHMM].[ext]
+   * - Legacy 4-arg call with dateYmdOverride only: qPRO_[ID]_[Ear]_[dateYmdOverride].[ext] */
+  function formatExportFilename(listenerId, ear, ext, dateYmdOverride = null, timeHmOverride = undefined) {
     const cleanId = String(listenerId || "Patient").trim().replace(/[^A-Za-z0-9_-]/g, "_") || "Patient";
     const e0 = String(ear || "Unspecified").toUpperCase();
-    const earCode = e0.startsWith("R") ? "R" : (e0.startsWith("L") ? "L" : (e0.startsWith("B") ? "B" : "M"));
-    let ymd = dateYmdOverride;
-    if (!ymd) {
-      const d = new Date();
-      ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const earCode = e0 === "RL" ? "RL" : (e0.startsWith("R") ? "R" : (e0.startsWith("L") ? "L" : (e0.startsWith("B") ? "B" : "M")));
+    if (dateYmdOverride) {
+      const hmSuffix = timeHmOverride ? `_${timeHmOverride}` : "";
+      return `qPRO_${cleanId}_${earCode}_${dateYmdOverride}${hmSuffix}.${ext}`;
     }
-    return `qPRO_${cleanId}_${earCode}_${ymd}.${ext}`;
+    const d = new Date();
+    const ymd = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
+    const hm = timeHmOverride || `${String(d.getHours()).padStart(2, "0")}${String(d.getMinutes()).padStart(2, "0")}`;
+    return `qPRO_${cleanId}_${earCode}_${ymd}_${hm}.${ext}`;
+  }
+
+  /* Format complete 1-ear or 2-ear (Right + Left) summary CSV with full IG50/65/80, REAR, MPO, CT, CR & Aided cols */
+  function formatSummaryCsv(reportsInput) {
+    const reps = (Array.isArray(reportsInput) ? reportsInput : [reportsInput]).filter(Boolean);
+    if (reps.length === 0) return "";
+    const fTags = ["250", "500", "750", "1k", "1_5k", "2k", "3k", "4k", "6k", "8k"];
+    const cols = [
+      "listener_id", "ear", "has_audiogram", "has_qcls", "has_qvcv", "qvcv_mode", "n_trials",
+      "phenotype", "pta_124_db_hl", "lf_pta_db_hl", "hf_pta_db_hl",
+      "qvcv_raw_pct", "qvcv_eq_fixed_pct",
+      "total_snr_loss_db", "snr_loss_se_db", "inaudibility_db", "recruitment_db", "clarity_loss_db",
+      "hf_recruitment_db", "hf_smearing", "voicing_pct_nh", "manner_pct_nh", "place_pct_nh",
+      "observed_aided_runs", "best_aided_label", "best_aided_qvcv_pct", "best_aided_delta_pct", "best_aided_snr_benefit_db",
+      "rx_amp_indicated", "rx_pred_aided_qvcv_pct", "rx_pred_snr_benefit_db", "rx_vent", "rx_wdrc_speed", "rx_directionality",
+      ...fTags.map(f => `aud_hl_${f}`),
+      ...fTags.map(f => `rear50_${f}`),
+      ...fTags.map(f => `rear65_${f}`),
+      ...fTags.map(f => `rear80_${f}`),
+      ...fTags.map(f => `mpo_${f}`),
+      ...fTags.map(f => `ig50_${f}`),
+      ...fTags.map(f => `ig65_${f}`),
+      ...fTags.map(f => `ig80_${f}`),
+      ...fTags.map(f => `ct_${f}`),
+      ...fTags.map(f => `cr_${f}`)
+    ];
+    const lines = [cols.join(",")];
+    for (const r of reps) {
+      const rx = r.prescription || {};
+      const aided = Array.isArray(r.aidedSessions) ? r.aidedSessions : [];
+      const bestAid = aided.length > 0 ? aided.reduce((a, b) => a.aidedPc >= b.aidedPc ? a : b) : null;
+      const hasQ = r.hasQvcv !== false;
+      const vals = [
+        r.listenerId,
+        r.ear,
+        r.hasAudiogram === false ? 0 : 1,
+        r.hasQcls ? 1 : 0,
+        hasQ ? 1 : 0,
+        r.qvcvMode || "standard",
+        r.nTrials ?? 0,
+        r.phenotype,
+        r.pta124,
+        r.lfPta,
+        r.hfPta,
+        hasQ ? r.empPcPooled : "",
+        hasQ ? r.eqFixedPc : "",
+        hasQ ? r.totalDeficitDb : "",
+        hasQ ? r.totalDeficitSeDb : "",
+        r.audibilityDeficitDb,
+        r.ohcDeficitDb,
+        hasQ ? r.neuralDeficitDb : "",
+        r.hfOhcDb,
+        r.hfSmearingLabel,
+        hasQ && r.rtrVoicingPct !== null ? r.rtrVoicingPct : "",
+        hasQ && r.rtrMannerPct !== null ? r.rtrMannerPct : "",
+        hasQ && r.rtrPlacePct !== null ? r.rtrPlacePct : "",
+        aided.length,
+        bestAid ? bestAid.aidType : "",
+        bestAid ? bestAid.aidedPc : "",
+        bestAid ? bestAid.deltaPc : "",
+        bestAid ? bestAid.snrBenefitDb : "",
+        rx.ampIndicated ? 1 : 0,
+        rx.predAidedQvcvPct ?? "",
+        rx.predSnrBenefitDb ?? "",
+        rx.ventLabel || "",
+        rx.wdrcSpeedLabel || "",
+        rx.directionalityLabel || "",
+        ...(r.audiogramHl || new Array(10).fill("")),
+        ...(rx.rear50Spl || new Array(10).fill("")),
+        ...(rx.rear65Spl || new Array(10).fill("")),
+        ...(rx.rear80Spl || new Array(10).fill("")),
+        ...(rx.mpoSpl || new Array(10).fill("")),
+        ...(rx.ig50Db || new Array(10).fill("")),
+        ...(rx.ig65Db || new Array(10).fill("")),
+        ...(rx.ig80Db || new Array(10).fill("")),
+        ...(rx.ctSpl || new Array(10).fill("")),
+        ...(rx.cr || new Array(10).fill(""))
+      ];
+      lines.push(vals.map(csvEscape).join(","));
+    }
+    return lines.join("\n") + "\n";
+  }
+
+  /* Round-trip JSON export bundle: preserves all top-level activeReport fields for
+   * downstream scripts while embedding profile_state & ear_reports for 1-click re-import */
+  function buildExportBundleJson({ activeReport, earReports = null, profileState = null, exportedAtIso = null }) {
+    if (!activeReport) return "";
+    const payload = {
+      qpro_bundle_version: "1.2.0",
+      exported_at_iso: exportedAtIso || new Date().toISOString(),
+      ...activeReport,
+      ...(earReports ? { ear_reports: earReports } : {}),
+      ...(profileState ? { profile_state: JSON.parse(JSON.stringify(profileState)) } : {})
+    };
+    return JSON.stringify(payload, null, 2) + "\n";
+  }
+
+  function makeBlankEarSlot() {
+    return {
+      audiogramHL: [20, 20, 20, 20, 25, 30, 35, 45, 50, 50],
+      hasOwnAudiogram: false,
+      audiogramEstimatedFromQcls: false,
+      elc10x10: null,
+      practicePc: null,
+      measuredSrtLossDb: null,
+      measuredSrtSeDb: null,
+      obsSnrPerCons: null,
+      meanAdaptiveSnrDb: null,
+      qvcvMode: "standard",
+      srtLossS1Db: null,
+      srtLossS2Db: null,
+      countsS1: Array.from({ length: 10 }, () => new Array(11).fill(0)),
+      countsS2: null,
+      aided: {},
+      hasQvcv: false
+    };
+  }
+
+  /* Parse & validate an exported qPRO_*.json file (supports both v1.2.0 profile_state
+   * bundles and legacy single-report qPRO_*.json exports) */
+  function parseImportedProfileJson(jsonText) {
+    let parsed = null;
+    try {
+      parsed = JSON.parse(String(jsonText || ""));
+    } catch (_e) {
+      return { ok: false, error: "Invalid JSON file." };
+    }
+    if (!parsed || typeof parsed !== "object") {
+      return { ok: false, error: "qPRO JSON must be an object." };
+    }
+
+    if (parsed.profile_state && typeof parsed.profile_state === "object" && parsed.profile_state.earSlots) {
+      const ps = parsed.profile_state;
+      const earSlots = {
+        Unspecified: makeBlankEarSlot(),
+        Right: makeBlankEarSlot(),
+        Left: makeBlankEarSlot(),
+        Both: makeBlankEarSlot()
+      };
+      for (const k of ["Unspecified", "Right", "Left", "Both"]) {
+        if (ps.earSlots[k] && typeof ps.earSlots[k] === "object") {
+          earSlots[k] = { ...makeBlankEarSlot(), ...JSON.parse(JSON.stringify(ps.earSlots[k])) };
+        }
+      }
+      return {
+        ok: true,
+        profile: {
+          listenerId: ps.listenerId || parsed.listenerId || "Patient",
+          group: ps.group || parsed.group || "Clinical",
+          ear: ps.ear || parsed.ear || "Unspecified",
+          transducer: ps.transducer || parsed.transducer || "er3a",
+          earSlots
+        }
+      };
+    }
+
+    /* Legacy single-report qPRO_*.json fallback */
+    if (Array.isArray(parsed.audiogramHl) && parsed.audiogramHl.length === 10) {
+      const earKey = ["Right", "Left", "Both", "Unspecified"].includes(parsed.ear) ? parsed.ear : "Unspecified";
+      const earSlots = {
+        Unspecified: makeBlankEarSlot(),
+        Right: makeBlankEarSlot(),
+        Left: makeBlankEarSlot(),
+        Both: makeBlankEarSlot()
+      };
+      const slot = earSlots[earKey];
+      slot.audiogramHL = parsed.audiogramHl.map(Number);
+      slot.hasOwnAudiogram = parsed.hasAudiogram !== false;
+      slot.elc10x10 = Array.isArray(parsed.elc10x10) ? parsed.elc10x10 : null;
+      slot.countsS1 = Array.isArray(parsed.rawCounts) && parsed.rawCounts.length === 10
+        ? parsed.rawCounts
+        : makeBlankEarSlot().countsS1;
+      slot.hasQvcv = parsed.hasQvcv !== undefined ? Boolean(parsed.hasQvcv) : ((parsed.nTrials || 0) > 0);
+      slot.qvcvMode = parsed.qvcvMode || "standard";
+      if (parsed.isAdaptiveQvcv && Number.isFinite(Number(parsed.totalDeficitDb))) {
+        slot.measuredSrtLossDb = Number(parsed.totalDeficitDb);
+        slot.measuredSrtSeDb = Number(parsed.totalDeficitSeDb || 1.15);
+      }
+      return {
+        ok: true,
+        profile: {
+          listenerId: parsed.listenerId || "Patient",
+          group: parsed.group || "Clinical",
+          ear: earKey,
+          transducer: parsed.transducer || "er3a",
+          earSlots
+        }
+      };
+    }
+
+    return { ok: false, error: "JSON does not contain a recognizable qPRO profile." };
   }
 
   const api = {
     init,
     evaluate,
+    splitCsvLine,
+    parseCsvRows,
+    inferFileMeta,
+    parseEmbeddedAudiogram10,
+    deriveAudiogramFromQclsElc,
     parseQvcvCsv,
     mergeQvcvRuns,
     parseQclsElcCsv,
     formatExportFilename,
+    formatSummaryCsv,
+    buildExportBundleJson,
+    parseImportedProfileJson,
+    makeBlankEarSlot,
     STIM_CONS,
     DISP_CONS
   };

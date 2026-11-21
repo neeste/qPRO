@@ -255,13 +255,24 @@
     const padL = 118, padR = 14, padT = 28, padB = 40;
     const pw = W - padL - padR, ph = H - padT - padB;
 
+    const hasQ = rep.hasQvcv !== false;
     const p90Tot = norms?.p90_total_db ?? 4.5;
     const p90Neu = norms?.p90_neural_db ?? 3.7;
-    const vals = [rep.totalDeficitDb, rep.audibilityDeficitDb, rep.ohcDeficitDb, rep.neuralDeficitDb];
-    const ses  = [rep.totalDeficitSeDb, 0, 0, rep.neuralSeDb];
-    const cols = [NAVY, BLUE_AUD, CORAL_OHC, rep.neuralDeficitDb > p90Neu ? RED_NEURAL : GREEN_OK];
+    const vals = [
+      hasQ ? rep.totalDeficitDb : (rep.audibilityDeficitDb + rep.ohcDeficitDb),
+      rep.audibilityDeficitDb,
+      rep.ohcDeficitDb,
+      hasQ ? rep.neuralDeficitDb : 0
+    ];
+    const ses  = [hasQ ? rep.totalDeficitSeDb : 0, 0, 0, hasQ ? rep.neuralSeDb : 0];
+    const cols = [
+      hasQ ? NAVY : MUTED,
+      BLUE_AUD,
+      CORAL_OHC,
+      !hasQ ? MUTED : (rep.neuralDeficitDb > p90Neu ? RED_NEURAL : GREEN_OK)
+    ];
     const lbls = [
-      ["Total Estimated", "SNR Loss"],
+      [hasQ ? "Total Estimated" : "Peripheral-Only", "SNR Loss"],
       ["1. Inaudibility", "(Restorable w/ Gain)"],
       ["2. Recruitment &", "Upward Masking"],
       ["3. Suprathreshold", "Clarity Loss"]
@@ -295,9 +306,12 @@
     for (let i = 0; i < 4; i++) {
       const yc = padT + (i + 0.5) * rowH;
       const v = vals[i], se = ses[i], col = cols[i];
-      const xv = xOf(v);
-      const bx = Math.min(xZero, xv), bw = Math.max(1.5, Math.abs(xv - xZero));
-      svg += `<rect x="${bx.toFixed(1)}" y="${(yc - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${col}" fill-opacity="0.88" stroke="#1E293B" stroke-width="0.8"/>`;
+      const isPendingBar = !hasQ && i === 3;
+      if (!isPendingBar) {
+        const xv = xOf(v);
+        const bx = Math.min(xZero, xv), bw = Math.max(1.5, Math.abs(xv - xZero));
+        svg += `<rect x="${bx.toFixed(1)}" y="${(yc - bh / 2).toFixed(1)}" width="${bw.toFixed(1)}" height="${bh.toFixed(1)}" fill="${col}" fill-opacity="0.88" stroke="#1E293B" stroke-width="0.8"/>`;
+      }
 
       if (se > 0.05) {
         const xe0 = xOf(v - se), xe1 = xOf(v + se);
@@ -306,9 +320,11 @@
         svg += `<line x1="${xe1.toFixed(1)}" y1="${(yc - 5).toFixed(1)}" x2="${xe1.toFixed(1)}" y2="${(yc + 5).toFixed(1)}" stroke="#0F172A" stroke-width="1.5"/>`;
       }
 
-      const txtVal = `${v >= 0 ? "+" : ""}${v.toFixed(1)}${se > 0.05 ? ` ± ${se.toFixed(1)}` : ""} dB`;
-      const tx = Math.max(xOf(v + se) + 5, xOf(0.4));
-      svg += `<text x="${tx.toFixed(1)}" y="${(yc + 4.0).toFixed(1)}" font-size="10.4" font-weight="700" fill="${col}">${esc(txtVal)}</text>`;
+      const txtVal = isPendingBar
+        ? "Pending qVCV CSV"
+        : `${v >= 0 ? "+" : ""}${v.toFixed(1)}${se > 0.05 ? ` ± ${se.toFixed(1)}` : ""} dB${(!hasQ && i === 0) ? " (periph.)" : ""}`;
+      const tx = isPendingBar ? xOf(0.5) : Math.max(xOf(v + se) + 5, xOf(0.4));
+      svg += `<text x="${tx.toFixed(1)}" y="${(yc + 4.0).toFixed(1)}" font-size="10.2" font-weight="700" fill="${col}">${esc(txtVal)}</text>`;
 
       svg += `<text x="${padL - 7}" y="${(yc - 2.5).toFixed(1)}" text-anchor="end" font-size="9.8" font-weight="700" fill="${SLATE}">${esc(lbls[i][0])}</text>`;
       svg += `<text x="${padL - 7}" y="${(yc + 10.5).toFixed(1)}" text-anchor="end" font-size="9.0" font-weight="600" fill="${MUTED}">${esc(lbls[i][1])}</text>`;
@@ -334,6 +350,7 @@
     const W = 440, H = 462;
     const padL = 44, padR = 14, padT = 28, padB = 50;
     const pw = W - padL - padR, ph = H - padT - padB;
+    const hasQ = rep.hasQvcv !== false;
     const nhP05 = norms?.nh_pc_p05 ?? 86.5;
     const isAdp = Boolean(rep.isAdaptiveQvcv);
     const actualCmpPc = isAdp ? rep.eqFixedPc : rep.empPcPooled;
@@ -341,9 +358,22 @@
     const bars = [
       { lines: ["Normal", "Hearing", "Avg"], val: rep.pcNhRef, col: GREEN_OK },
       { lines: ["Expected:", "Audiogram", "Only"], val: rep.pcStage1Aud, col: BLUE_AUD },
-      { lines: ["Expected:", "Audiogram", "+ qCLS"], val: rep.pcStage2Periph, col: CORAL_OHC },
-      { lines: isAdp ? ["Equiv.", "Unaided", "qVCV*"] : ["Actual", "Unaided", "qVCV"], val: actualCmpPc, col: NAVY }
+      { lines: ["Expected:", "Audiogram", "+ qCLS"], val: rep.pcStage2Periph, col: CORAL_OHC }
     ];
+    if (hasQ) {
+      bars.push({
+        lines: isAdp ? ["Equiv.", "Unaided", "qVCV*"] : ["Actual", "Unaided", "qVCV"],
+        val: actualCmpPc,
+        col: NAVY
+      });
+    } else {
+      bars.push({
+        lines: ["Pending", "Unaided", "qVCV"],
+        val: 0,
+        col: MUTED,
+        pending: true
+      });
+    }
     for (const a of rep.aidedSessions) {
       const parts = a.aidType.split(" ");
       bars.push({
@@ -360,8 +390,9 @@
 
     const gapPp = actualCmpPc - rep.pcStage2Periph;
     const titlePrefix = isAdp ? "D. Expected vs. Equiv. qVCV*" : "D. Expected vs. Actual qVCV Score";
+    const gapSuffix = hasQ ? `  [Actual - Exp: ${gapPp >= 0 ? "+" : ""}${gapPp.toFixed(1)}%]` : "  [Awaiting qVCV]";
     let svg = `<svg viewBox="0 0 ${W} ${H}" class="qpro-svg" role="img" aria-label="Expected vs Actual qVCV Score">`;
-    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">${titlePrefix}  [Actual - Exp: ${gapPp >= 0 ? "+" : ""}${gapPp.toFixed(1)}%]</text>`;
+    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">${titlePrefix}${gapSuffix}</text>`;
     svg += `<rect x="${padL}" y="${padT}" width="${pw}" height="${ph}" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>`;
 
     /* NH green range */
@@ -378,18 +409,22 @@
 
     bars.forEach((b, idx) => {
       const xc = padL + (idx + 0.5) * slotW;
-      const yb = yOf(b.val), y0 = yOf(0);
-      svg += `<rect x="${(xc - bw / 2).toFixed(1)}" y="${yb.toFixed(1)}" width="${bw.toFixed(1)}" height="${(y0 - yb).toFixed(1)}" fill="${b.col}" fill-opacity="0.88" stroke="#1E293B" stroke-width="0.8"/>`;
+      if (b.pending) {
+        svg += `<text x="${xc.toFixed(1)}" y="${yOf(48).toFixed(1)}" text-anchor="middle" font-size="10.2" font-weight="700" fill="${MUTED}">Pending</text>`;
+      } else {
+        const yb = yOf(b.val), y0 = yOf(0);
+        svg += `<rect x="${(xc - bw / 2).toFixed(1)}" y="${yb.toFixed(1)}" width="${bw.toFixed(1)}" height="${(y0 - yb).toFixed(1)}" fill="${b.col}" fill-opacity="0.88" stroke="#1E293B" stroke-width="0.8"/>`;
 
-      let topRef = b.val;
-      const dot1 = isAdp ? rep.empPcS1Eq : rep.empPcS1;
-      const dot2 = isAdp ? rep.empPcS2Eq : rep.empPcS2;
-      if (idx === 3 && dot2 !== null && dot1 !== null) {
-        topRef = Math.max(b.val, dot1, dot2);
-        svg += `<circle cx="${(xc - 6.5).toFixed(1)}" cy="${yOf(dot1).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
-        svg += `<circle cx="${(xc + 6.5).toFixed(1)}" cy="${yOf(dot2).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
+        let topRef = b.val;
+        const dot1 = isAdp ? rep.empPcS1Eq : rep.empPcS1;
+        const dot2 = isAdp ? rep.empPcS2Eq : rep.empPcS2;
+        if (idx === 3 && dot2 !== null && dot1 !== null) {
+          topRef = Math.max(b.val, dot1, dot2);
+          svg += `<circle cx="${(xc - 6.5).toFixed(1)}" cy="${yOf(dot1).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
+          svg += `<circle cx="${(xc + 6.5).toFixed(1)}" cy="${yOf(dot2).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
+        }
+        svg += `<text x="${xc.toFixed(1)}" y="${yOf(Math.min(topRef + 2.2, 101)).toFixed(1)}" text-anchor="middle" font-size="10.0" font-weight="700" fill="${NAVY}">${b.val.toFixed(1)}%</text>`;
       }
-      svg += `<text x="${xc.toFixed(1)}" y="${yOf(Math.min(topRef + 2.2, 101)).toFixed(1)}" text-anchor="middle" font-size="10.0" font-weight="700" fill="${NAVY}">${b.val.toFixed(1)}%</text>`;
 
       b.lines.forEach((ln, li) => {
         svg += `<text x="${xc.toFixed(1)}" y="${padT + ph + 14 + li * 11.2}" text-anchor="middle" font-size="9.1" font-weight="700" fill="${SLATE}">${esc(ln)}</text>`;
@@ -425,11 +460,22 @@
     const stims = ["B", "D", "G", "K", "N", "S", "SH", "T", "V", "Z"];
     const resps = ["B", "D", "G", "K", "N", "S", "SH", "T", "V", "Z", "???"];
 
-    const eTitle = rep.isAdaptiveQvcv
-      ? "E. Consonant Confusion Pattern (%) — Adaptive-SNR Trials"
-      : "E. Consonant Confusion Pattern (%) — De-Noised Estimate";
+    const hasQ = rep.hasQvcv !== false;
+    const eTitle = !hasQ
+      ? "E. Consonant Confusion Pattern (%) — Pending qVCV"
+      : (rep.isAdaptiveQvcv
+          ? "E. Consonant Confusion Pattern (%) — Adaptive-SNR Trials"
+          : "E. Consonant Confusion Pattern (%) — De-Noised Estimate");
     let svg = `<svg viewBox="0 0 ${W} ${H}" class="qpro-svg" role="img" aria-label="Consonant Confusion Matrix">`;
     svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">${eTitle}</text>`;
+
+    if (!hasQ) {
+      svg += `<rect x="${padL}" y="${padT}" width="${pw}" height="${ph}" fill="#F8FAFC" stroke="#94A3B8" stroke-width="1"/>`;
+      svg += `<text x="${padL + pw / 2}" y="${padT + ph * 0.45}" text-anchor="middle" font-size="11.4" font-weight="700" fill="${MUTED}">qVCV Confusion Data Not Yet Imported</text>`;
+      svg += `<text x="${padL + pw / 2}" y="${padT + ph * 0.54}" text-anchor="middle" font-size="9.8" fill="${SLATE}">Import Unaided qVCV CSV to populate confusion matrix &amp; feature clarity.</text>`;
+      svg += `</svg>`;
+      return svg;
+    }
 
     for (let i = 0; i < 10; i++) {
       const y = padT + i * ch;
@@ -479,16 +525,23 @@
    * ===================================================================== */
   function renderReportSheet(container, rep, norms, opts = {}) {
     const topDown = opts.audiogramTopDown !== false;
+    const hasQ = rep.hasQvcv !== false;
     let earTxt = "MONAURAL", earBg = "#475569";
     if (rep.ear === "Right") { earTxt = "RIGHT EAR (O)"; earBg = "#DC2626"; }
     else if (rep.ear === "Left") { earTxt = "LEFT EAR (X)"; earBg = "#2563EB"; }
     else if (rep.ear === "Both") { earTxt = "BINAURAL"; earBg = "#0F766E"; }
 
-    const s12Str = rep.isAdaptiveQvcv
-      ? `Equiv. ${rep.eqFixedPc.toFixed(1)}% (Adp ${rep.empPcPooled.toFixed(0)}%, ${rep.nTrials} tr)`
-      : (rep.empPcS2 !== null
-          ? `${rep.empPcPooled.toFixed(1)}% (Test ${rep.empPcS1.toFixed(0)}% / Retest ${rep.empPcS2.toFixed(0)}%)`
-          : `${rep.empPcPooled.toFixed(1)}% (${rep.nTrials} trials)`);
+    const s12Str = !hasQ
+      ? "Pending qVCV CSV"
+      : (rep.isAdaptiveQvcv
+          ? `Equiv. ${rep.eqFixedPc.toFixed(1)}% (Adp ${rep.empPcPooled.toFixed(0)}%, ${rep.nTrials} tr)`
+          : (rep.empPcS2 !== null
+              ? `${rep.empPcPooled.toFixed(1)}% (Test ${rep.empPcS1.toFixed(0)}% / Retest ${rep.empPcS2.toFixed(0)}%)`
+              : `${rep.empPcPooled.toFixed(1)}% (${rep.nTrials} trials)`));
+
+    const snrMetaStr = hasQ
+      ? `${rep.totalDeficitDb >= 0 ? "+" : ""}${rep.totalDeficitDb.toFixed(1)} dB (${rep.snrLossSeverity})`
+      : `+${(rep.audibilityDeficitDb + rep.ohcDeficitDb).toFixed(1)} dB peripheral (qVCV pending)`;
 
     const aidedHtml = rep.aidedSessions.length > 0
       ? `<span class="qpro-aided-pill">Aided: ${rep.aidedSessions.map(a => `${esc(a.aidType)}: ${a.aidedPc.toFixed(0)}% (${a.deltaPc >= 0 ? "+" : ""}${a.deltaPc.toFixed(0)}%)`).join("  •  ")}</span>`
@@ -499,9 +552,11 @@
       return `<div class="qc-row"><span class="qc-badge ${cls}">[${esc(st)}]</span><span><strong>${esc(name)}:</strong> ${esc(msg)}</span></div>`;
     }).join("");
 
-    const confHtml = rep.topConfusions.length > 0
-      ? rep.topConfusions.slice(0, 4).map(c => `Heard '${esc(c.stim)}' as '${esc(c.resp)}' (${c.count}/${c.outOf}, ${Math.round(c.pct)}%)`).join("  •  ")
-      : "Minimal consonant confusions (&lt;10% per pair); Voicing, Manner, and Place speech cues preserved.";
+    const confHtml = !hasQ
+      ? "qVCV speech-in-noise CSV not yet imported."
+      : (rep.topConfusions.length > 0
+          ? rep.topConfusions.slice(0, 4).map(c => `Heard '${esc(c.stim)}' as '${esc(c.resp)}' (${c.count}/${c.outOf}, ${Math.round(c.pct)}%)`).join("  •  ")
+          : "Minimal consonant confusions (&lt;10% per pair); Voicing, Manner, and Place speech cues preserved.");
 
     const remHtml = rep.remTargets
       ? `<div class="rem-strip"><strong>REM (0.5/1/2/4 kHz, dB SPL):</strong> Comfort CU25 = ${rep.remTargets.comfortCu25.join("/")}  •  MPO Cap CU50 = ${rep.remTargets.mpoCu50.join("/")}</div>`
@@ -524,7 +579,7 @@
           PTA (1,2,4 kHz): <strong>${rep.pta124.toFixed(1)} dB HL</strong> &nbsp;|&nbsp;
           HF-PTA (3-8 kHz): <strong>${rep.hfPta.toFixed(1)} dB HL</strong> &nbsp;|&nbsp;
           qVCV: <strong>${esc(s12Str)}</strong> &nbsp;|&nbsp;
-          Est. SNR Loss: <strong>${rep.totalDeficitDb >= 0 ? "+" : ""}${rep.totalDeficitDb.toFixed(1)} dB (${esc(rep.snrLossSeverity)})</strong>
+          Est. SNR Loss: <strong>${esc(snrMetaStr)}</strong>
         </div>
         <div class="qpro-pheno-bar" style="background:${rep.phenotypeColor}">
           <span>CLINICAL SUMMARY: &nbsp;${esc(rep.phenotype)}</span>
@@ -763,11 +818,17 @@
 
     /* Predicted Aided qVCV Summary Box (top-left) */
     const bx = padL + 8, by = padT + 8;
-    const baseUnaidedPc = rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled;
+    const hasQ = rep.hasQvcv !== false;
+    const baseUnaidedPc = !hasQ
+      ? rep.pcStage2Periph
+      : (rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled);
+    const unaidedLbl = !hasQ
+      ? "Expected Unaided"
+      : `Unaided qVCV${rep.isAdaptiveQvcv ? " (eq.)" : ""}`;
     const dlt = rx.predAidedQvcvPct - baseUnaidedPc;
     svg += `<rect x="${bx}" y="${by}" width="218" height="62" rx="5" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.0"/>`;
     svg += `<text x="${bx + 9}" y="${by + 16}" font-size="9.2" font-weight="800" fill="#166534">BIOPHYSICAL OUTCOME PREDICTION</text>`;
-    svg += `<text x="${bx + 9}" y="${by + 34}" font-size="10.4" font-weight="700" fill="${NAVY}">Unaided qVCV${rep.isAdaptiveQvcv ? " (eq.)" : ""}: ${baseUnaidedPc.toFixed(1)}%</text>`;
+    svg += `<text x="${bx + 9}" y="${by + 34}" font-size="10.4" font-weight="700" fill="${NAVY}">${unaidedLbl}: ${baseUnaidedPc.toFixed(1)}%</text>`;
     svg += `<text x="${bx + 9}" y="${by + 51}" font-size="10.6" font-weight="800" fill="${TEAL_AID}">qPRO-Rx Aided: ${rx.predAidedQvcvPct.toFixed(1)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(1)}%)</text>`;
 
     /* Legend (bottom-right, showing CT + CR) */
@@ -792,19 +853,24 @@
    * ===================================================================== */
   function renderPrescriptionSheet(container, rep) {
     const rx = rep.prescription;
+    const hasQ = rep.hasQvcv !== false;
     let earTxt = "MONAURAL", earBg = "#475569";
     if (rep.ear === "Right") { earTxt = "RIGHT EAR (O)"; earBg = "#DC2626"; }
     else if (rep.ear === "Left") { earTxt = "LEFT EAR (X)"; earBg = "#2563EB"; }
     else if (rep.ear === "Both") { earTxt = "BINAURAL"; earBg = "#0F766E"; }
 
-    const baseUnaidedPc = rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled;
+    const baseUnaidedPc = !hasQ
+      ? rep.pcStage2Periph
+      : (rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled);
     const dlt = rx.predAidedQvcvPct - baseUnaidedPc;
-    const statusBg = rx.ampIndicated ? TEAL_AID : (rep.neuralDeficitDb > 3.7 ? RED_NEURAL : GREEN_OK);
+    const statusBg = rx.ampIndicated ? TEAL_AID : ((hasQ && rep.neuralDeficitDb > 3.7) ? RED_NEURAL : GREEN_OK);
     const statusTxt = rx.ampIndicated
-      ? `PRESCRIPTION: AMPLIFICATION INDICATED  •  Predicted qVCV: ${baseUnaidedPc.toFixed(0)}% → ${rx.predAidedQvcvPct.toFixed(0)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(0)}%)`
-      : (rep.neuralDeficitDb > 3.7
+      ? `PRESCRIPTION: AMPLIFICATION INDICATED  •  Predicted qVCV: ${baseUnaidedPc.toFixed(0)}% → ${rx.predAidedQvcvPct.toFixed(0)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(0)}%)${hasQ ? "" : " [Preliminary — qVCV Pending]"}`
+      : ((hasQ && rep.neuralDeficitDb > 3.7)
           ? "PRESCRIPTION: ACOUSTIC GAIN NOT INDICATED — Prescribe Remote-Mic / Directional SNR Support Only"
-          : "PRESCRIPTION: AMPLIFICATION NOT INDICATED — Normal Peripheral & Suprathreshold Profile");
+          : (hasQ
+              ? "PRESCRIPTION: AMPLIFICATION NOT INDICATED — Normal Peripheral & Suprathreshold Profile"
+              : "PRESCRIPTION: ACOUSTIC GAIN NOT INDICATED FROM THRESHOLDS — Import qVCV to Verify Clarity"));
 
     const obsAidRight = rep.aidedSessions.length > 0
       ? `<span class="qpro-aided-pill">Observed Aided: ${rep.aidedSessions.map(a => `${esc(a.aidType)} ${a.aidedPc.toFixed(0)}%`).join(" • ")}</span>`
@@ -816,6 +882,13 @@
     const ctSpeech = [ctArr[1], ctArr[3], ctArr[5], ctArr[7]];
     const ctLo = Math.min(...ctSpeech), ctHi = Math.max(...ctSpeech);
     const ctRangeTxt = ctLo === ctHi ? `${ctLo} dB SPL` : `${ctLo}–${ctHi} dB SPL`;
+
+    const snrHdrTxt = hasQ
+      ? `${rep.totalDeficitDb >= 0 ? "+" : ""}${rep.totalDeficitDb.toFixed(1)} dB`
+      : `+${(rep.audibilityDeficitDb + rep.ohcDeficitDb).toFixed(1)} dB (periph.)`;
+    const clarHdrTxt = hasQ
+      ? `${rep.neuralDeficitDb >= 0 ? "+" : ""}${rep.neuralDeficitDb.toFixed(1)} dB`
+      : "Pending qVCV";
 
     container.innerHTML = `
       <div class="qpro-hdr-banner">
@@ -831,8 +904,8 @@
           PTA (1,2,4 kHz): <strong>${rep.pta124.toFixed(1)} dB HL</strong> &nbsp;|&nbsp;
           LF-PTA: <strong>${rep.lfPta.toFixed(1)} dB HL</strong> &nbsp;|&nbsp;
           HF-PTA (3-8 kHz): <strong>${rep.hfPta.toFixed(1)} dB HL</strong> &nbsp;|&nbsp;
-          Est. SNR Loss: <strong>${rep.totalDeficitDb >= 0 ? "+" : ""}${rep.totalDeficitDb.toFixed(1)} dB</strong> &nbsp;|&nbsp;
-          Clarity Loss: <strong>${rep.neuralDeficitDb >= 0 ? "+" : ""}${rep.neuralDeficitDb.toFixed(1)} dB</strong>
+          Est. SNR Loss: <strong>${esc(snrHdrTxt)}</strong> &nbsp;|&nbsp;
+          Clarity Loss: <strong>${esc(clarHdrTxt)}</strong>
         </div>
         <div class="qpro-pheno-bar" style="background:${statusBg}">
           <span>${esc(statusTxt)}</span>

@@ -185,6 +185,17 @@
       margin-top: 6px;
       min-height: 16px;
     }
+    #import-warn-msg {
+      font-size: 11.5px;
+      color: #b45309;
+      background: #fffbeb;
+      border: 1px solid #fcd34d;
+      border-radius: 4px;
+      padding: 4px 8px;
+      font-weight: 600;
+      margin-top: 5px;
+    }
+    #import-warn-msg[hidden] { display: none; }
 
     /* ==============================================================
      * 1-PAGE US LETTER LANDSCAPE REPORT SHEET (11 : 8.5 Aspect Ratio)
@@ -433,10 +444,10 @@
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
       }
-      body:not(.print-packet) {
+      body:not(.print-packet):not(.print-binaural) {
         overflow: hidden !important;
       }
-      body.print-packet {
+      body.print-packet, body.print-binaural {
         overflow: visible !important;
       }
       .app-topbar, .toolbar, #data-drawer, .privacy-footer {
@@ -461,10 +472,12 @@
         break-inside: avoid !important;
         page-break-inside: avoid !important;
       }
-      body:not(.print-packet) #report-sheet {
+      body:not(.print-packet):not(.print-binaural) #report-sheet {
         page-break-after: avoid !important;
       }
-      body:not(.print-packet) #report-sheet-secondary {
+      body:not(.print-packet):not(.print-binaural) #report-sheet-secondary,
+      body:not(.print-binaural) #report-sheet-p3,
+      body:not(.print-binaural) #report-sheet-p4 {
         display: none !important;
       }
       body.print-packet #report-sheet {
@@ -472,6 +485,17 @@
         page-break-after: always !important;
       }
       body.print-packet #report-sheet-secondary {
+        display: flex !important;
+        page-break-after: avoid !important;
+      }
+      body.print-binaural #report-sheet,
+      body.print-binaural #report-sheet-secondary,
+      body.print-binaural #report-sheet-p3 {
+        display: flex !important;
+        break-after: page !important;
+        page-break-after: always !important;
+      }
+      body.print-binaural #report-sheet-p4 {
         display: flex !important;
         page-break-after: avoid !important;
       }
@@ -526,6 +550,7 @@
       <label for="demo-select">Case:</label>
       <select id="demo-select"></select>
 
+      <button type="button" id="new-patient-btn" title="Clear demo data and start a blank clinical patient profile">New Patient</button>
       <button type="button" id="toggle-drawer-btn" class="btn-teal">Patient / CSV Input ▾</button>
 
       <label for="ear-select">Ear:</label>
@@ -547,8 +572,11 @@
       <span id="wasm-status">Loading WASM…</span>
       <button type="button" id="print-one-btn" class="btn-gold">Print Sheet</button>
       <button type="button" id="print-both-btn" class="btn-teal" title="Print 2-Page Landscape Packet (Page 1: Diagnostic Profile, Page 2: Prescription / REM Sheet)">Print 2-Page Packet</button>
+      <button type="button" id="print-binaural-btn" class="btn-teal" hidden title="Print 4-Page Binaural Packet (Right Diagnostic + Rx, Left Diagnostic + Rx)">Print R+L (4p)</button>
       <button type="button" id="export-csv-btn">Export CSV</button>
       <button type="button" id="export-json-btn">Export JSON</button>
+      <button type="button" id="import-json-btn" title="Re-open a previously exported qPRO_*.json profile">Import JSON</button>
+      <input type="file" id="file-qpro-json" accept=".json,application/json" hidden>
       <a href="guide.html" class="btn btn-outline">Clinician Guide</a>
     </div>
   </nav>
@@ -592,6 +620,10 @@
           <select id="local-qcls-sel"><option value="">(Check browser localStorage)</option></select>
         </div>
         <div class="field-row">
+          <label for="local-qvcv-sel">Saved qVCV:</label>
+          <select id="local-qvcv-sel"><option value="">(Check browser localStorage)</option></select>
+        </div>
+        <div class="field-row">
           <label for="saved-qpro-sel">Saved qPRO:</label>
           <select id="saved-qpro-sel"><option value="">0 saved in browser</option></select>
         </div>
@@ -626,14 +658,17 @@
           <input type="file" id="file-contra" accept=".csv" multiple>
         </div>
         <div id="import-status-msg"></div>
+        <div id="import-warn-msg" hidden></div>
       </div>
     </div>
   </section>
 
-  <!-- 1-Page Landscape Clinical Report Sheet (+ Print-Only Second Sheet for 2-Page Packet) -->
+  <!-- 1-Page Landscape Clinical Report Sheet (+ Print-Only Sheets for 2-Page & 4-Page Binaural Packets) -->
   <main class="sheet-wrap">
     <div id="report-sheet" class="report-sheet-box" aria-live="polite"></div>
     <div id="report-sheet-secondary" class="report-sheet-box" hidden></div>
+    <div id="report-sheet-p3" class="report-sheet-box" hidden></div>
+    <div id="report-sheet-p4" class="report-sheet-box" hidden></div>
   </main>
 
   <footer class="privacy-footer">
@@ -652,9 +687,13 @@
       const PROFILE_STORE_MAX = 35;
 
       function createEmptyEarSlot() {
+        if (window.QProEngine && typeof window.QProEngine.makeBlankEarSlot === "function") {
+          return window.QProEngine.makeBlankEarSlot();
+        }
         return {
           audiogramHL: [20, 20, 20, 20, 25, 30, 35, 45, 50, 50],
           hasOwnAudiogram: false,
+          audiogramEstimatedFromQcls: false,
           elc10x10: null,
           practicePc: null,
           measuredSrtLossDb: null,
@@ -664,13 +703,31 @@
           qvcvMode: "standard",
           srtLossS1Db: null,
           srtLossS2Db: null,
-          countsS1: Array.from({ length: 10 }, (_, i) => {
-            const r = new Array(11).fill(0); r[i] = 9; return r;
-          }),
+          countsS1: Array.from({ length: 10 }, () => new Array(11).fill(0)),
           countsS2: null,
           aided: {},
           hasQvcv: false
         };
+      }
+
+      function createFreshEarSlots() {
+        return {
+          Unspecified: createEmptyEarSlot(),
+          Right: createEmptyEarSlot(),
+          Left: createEmptyEarSlot(),
+          Both: createEmptyEarSlot()
+        };
+      }
+
+      function slotHasAnyData(slot) {
+        if (!slot) return false;
+        return Boolean(
+          slot.hasOwnAudiogram ||
+          slot.audiogramEstimatedFromQcls ||
+          slot.elc10x10 ||
+          slot.hasQvcv ||
+          (slot.aided && Object.keys(slot.aided).length > 0)
+        );
       }
 
       const state = {
@@ -679,12 +736,8 @@
         ear: "Unspecified",
         transducer: "er3a",
         sheetMode: "diagnostic",
-        earSlots: {
-          Unspecified: createEmptyEarSlot(),
-          Right: createEmptyEarSlot(),
-          Left: createEmptyEarSlot(),
-          Both: createEmptyEarSlot()
-        },
+        isDemo: true,
+        earSlots: createFreshEarSlots(),
         lastReport: null
       };
 
@@ -699,24 +752,60 @@
         return null;
       }
 
+      function ensureClinicalWorkspaceForImport(incomingId, incomingEar) {
+        /* If currently showing a built-in Demo Case, clear demo data cleanly before first clinical import */
+        if (state.isDemo) {
+          state.earSlots = createFreshEarSlots();
+          state.isDemo = false;
+          state.group = "Clinical";
+          if (incomingId) state.listenerId = incomingId;
+          if (incomingEar) state.ear = incomingEar;
+          demoSel.value = "";
+          return { idConflict: false };
+        }
+        const curHasAny = Object.values(state.earSlots).some(slotHasAnyData);
+        const idConflict = Boolean(
+          curHasAny &&
+          incomingId &&
+          state.listenerId &&
+          state.listenerId !== "Patient" &&
+          state.listenerId !== "NewPatient" &&
+          incomingId.toUpperCase() !== state.listenerId.toUpperCase()
+        );
+        if (!curHasAny || state.listenerId === "Patient" || state.listenerId === "NewPatient") {
+          if (incomingId) state.listenerId = incomingId;
+        }
+        return { idConflict };
+      }
+
       /* Build 10-frequency audiogram input boxes */
       const audGrid = document.getElementById("aud-inputs");
       FREQ_SHORT.forEach((lbl, idx) => {
         const div = document.createElement("div");
         div.className = "aud-cell";
-        div.innerHTML = `<span>${lbl} Hz</span><input type="number" min="-10" max="120" step="5" data-fidx="${idx}" value="30">`;
+        div.innerHTML = `<span>${lbl} Hz</span><input type="number" min="-10" max="120" step="5" data-fidx="${idx}" value="20">`;
         audGrid.appendChild(div);
       });
 
-      function setImportStatus(msg) {
+      function setImportStatus(msg, warnMsg = "") {
         document.getElementById("import-status-msg").textContent = msg || "";
+        const warnEl = document.getElementById("import-warn-msg");
+        if (warnMsg) {
+          warnEl.textContent = warnMsg;
+          warnEl.hidden = false;
+        } else {
+          warnEl.textContent = "";
+          warnEl.hidden = true;
+        }
       }
 
       function syncInputsFromState() {
         const slot = activeSlot();
         document.getElementById("inp-id").value = state.listenerId;
         document.getElementById("ear-select").value = state.ear;
-        document.getElementById("aud-ear-lbl").textContent = state.ear === "Unspecified" ? "Monaural" : `${state.ear} Ear`;
+        const estTag = (!slot.hasOwnAudiogram && slot.audiogramEstimatedFromQcls) ? " • Est. from qCLS" : "";
+        document.getElementById("aud-ear-lbl").textContent =
+          (state.ear === "Unspecified" ? "Monaural" : `${state.ear} Ear`) + estTag;
         document.getElementById("inp-trans").value = state.transducer;
         document.getElementById("inp-prac").value = slot.practicePc !== null && slot.practicePc !== undefined ? slot.practicePc : "";
         document.getElementById("inp-srt").value = slot.measuredSrtLossDb !== null && slot.measuredSrtLossDb !== undefined
@@ -746,11 +835,19 @@
         audGrid.querySelectorAll("input").forEach(inp => {
           slot.audiogramHL[Number(inp.dataset.fidx)] = Number(inp.value || 0);
         });
-        if (markAudiogramEdited) slot.hasOwnAudiogram = true;
+        if (markAudiogramEdited) {
+          slot.hasOwnAudiogram = true;
+          slot.audiogramEstimatedFromQcls = false;
+          state.isDemo = false;
+        }
       }
 
-      /* Populate Demo Case selector (default to Case 4 — HL068) */
+      /* Populate Demo Case selector (with Blank Clinical option + 6 baked Demo Cases) */
       const demoSel = document.getElementById("demo-select");
+      const blankOpt = document.createElement("option");
+      blankOpt.value = "";
+      blankOpt.textContent = "— Custom / Clinical Patient —";
+      demoSel.appendChild(blankOpt);
       const demos = (window.QPRO_DATA && window.QPRO_DATA.demos) ? window.QPRO_DATA.demos : [];
       demos.forEach((d, idx) => {
         const opt = document.createElement("option");
@@ -759,6 +856,27 @@
         demoSel.appendChild(opt);
       });
 
+      function startNewBlankPatient() {
+        state.listenerId = "NewPatient";
+        state.group = "Clinical";
+        state.ear = "Right";
+        state.isDemo = false;
+        state.earSlots = createFreshEarSlots();
+        demoSel.value = "";
+        /* Reset file inputs so re-selecting same filename triggers onchange */
+        ["file-qvcv", "file-qcls", "file-aided", "file-contra", "file-qpro-json"].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.value = "";
+        });
+        setImportStatus("Started blank patient profile — enter Audiogram and/or import qCLS & qVCV CSVs.");
+        document.getElementById("data-drawer").hidden = false;
+        syncInputsFromState();
+        recomputeAndRender();
+        const idInp = document.getElementById("inp-id");
+        idInp.focus();
+        idInp.select();
+      }
+
       function loadDemoIndex(idx) {
         const d = demos[idx];
         if (!d) return;
@@ -766,15 +884,12 @@
         state.group = d.group;
         state.ear = d.ear || "Unspecified";
         state.transducer = d.transducer || "er3a";
-        state.earSlots = {
-          Unspecified: createEmptyEarSlot(),
-          Right: createEmptyEarSlot(),
-          Left: createEmptyEarSlot(),
-          Both: createEmptyEarSlot()
-        };
+        state.isDemo = true;
+        state.earSlots = createFreshEarSlots();
         const slot = activeSlot();
         slot.audiogramHL = d.audiogram_hl.slice();
         slot.hasOwnAudiogram = true;
+        slot.audiogramEstimatedFromQcls = false;
         slot.elc10x10 = d.elc_10x10 ? d.elc_10x10.map(r => r.slice()) : null;
         slot.practicePc = d.practice_pc;
         slot.measuredSrtLossDb = null;
@@ -842,11 +957,11 @@
             if (sel.value === "") return;
             const rec = raw[Number(sel.value)];
             if (!rec || !rec.report || !rec.report.mu) return;
-            if (rec.id) state.listenerId = rec.id;
-            if (rec.ear) {
-              const e0 = rec.ear.toLowerCase();
-              state.ear = e0.startsWith("r") ? "Right" : (e0.startsWith("l") ? "Left" : "Both");
-            }
+            const recEar = rec.ear
+              ? (rec.ear.toLowerCase().startsWith("r") ? "Right" : (rec.ear.toLowerCase().startsWith("l") ? "Left" : "Both"))
+              : state.ear;
+            const { idConflict } = ensureClinicalWorkspaceForImport(rec.id || null, recEar);
+            state.ear = recEar;
             const slot = activeSlot();
             const elc10 = Array.from({ length: 10 }, () => new Array(10).fill(null));
             for (let b = 0; b < 9; b++) {
@@ -862,26 +977,104 @@
               }
               slot.audiogramHL[9] = slot.audiogramHL[8];
               slot.hasOwnAudiogram = true;
+              slot.audiogramEstimatedFromQcls = false;
+            } else if (!slot.hasOwnAudiogram) {
+              const estAud = window.QProEngine.deriveAudiogramFromQclsElc(elc10, state.transducer);
+              if (estAud) {
+                slot.audiogramHL = estAud;
+                slot.audiogramEstimatedFromQcls = true;
+              }
             }
-            setImportStatus(`Loaded saved qCLS session for ${state.listenerId} (${state.ear}).`);
+            const warn = idConflict
+              ? `Warning: Loaded qCLS is for '${rec.id}', while current profile ID is '${state.listenerId}'.`
+              : "";
+            setImportStatus(`Loaded saved qCLS session for ${rec.id || state.listenerId} (${state.ear}).`, warn);
             syncInputsFromState();
             recomputeAndRender();
+            saveProfileToBrowser();
           };
         } catch (_) {}
       }
 
-      function computeContralateralSummaryForActiveEar() {
-        const oppKey = oppositeEarKey(state.ear);
+      /* Populate Saved qVCV Completed Runs from same-origin localStorage ('qVCV_completed_runs_v1') */
+      function refreshLocalQvcvSessions() {
+        const sel = document.getElementById("local-qvcv-sel");
+        if (!sel) return;
+        try {
+          const raw = JSON.parse(localStorage.getItem("qVCV_completed_runs_v1") || "[]");
+          sel.innerHTML = `<option value="">${raw.length} saved in browser</option>` +
+            raw.map((r, i) => {
+              const eCode = (r.ear || "?")[0].toUpperCase();
+              const cTag = r.condition === "Aided" ? "Aided" : "Unaided";
+              const mTag = r.mode === "adaptive_50" ? "ADP50" : (r.mode === "adaptive_100" ? "ADP100" : "Fixed");
+              return `<option value="${i}">${r.participantId || "?"} (${eCode}, ${cTag}, ${mTag}) ${(r.completedAtIso || "").slice(0, 16).replace("T", " ")}</option>`;
+            }).join("");
+          sel.onchange = () => {
+            if (sel.value === "") return;
+            const rec = raw[Number(sel.value)];
+            if (!rec || !rec.csvText) return;
+            const parsed = window.QProEngine.parseQvcvCsv(rec.csvText, rec.filename || "");
+            const targetEar = parsed.ear || state.ear;
+            const { idConflict } = ensureClinicalWorkspaceForImport(parsed.participantId, targetEar);
+            if (targetEar) state.ear = targetEar;
+            const slot = activeSlot();
+            if (parsed.audiogramHL && !slot.hasOwnAudiogram) {
+              slot.audiogramHL = parsed.audiogramHL.slice();
+              slot.hasOwnAudiogram = true;
+              slot.audiogramEstimatedFromQcls = false;
+            }
+            if (parsed.condition === "Aided") {
+              const nNext = Object.keys(slot.aided || {}).length + 1;
+              const lbl = nNext === 1 ? "Aided Run" : `Aided ${nNext}`;
+              slot.aided[lbl] = {
+                label: lbl,
+                counts: parsed.counts,
+                isAdaptive: parsed.isAdaptive,
+                finalSnrLossDb: parsed.finalSnrLossDb,
+                meanSnrDb: parsed.meanSnrDb
+              };
+            } else {
+              const merged = window.QProEngine.mergeQvcvRuns([parsed]);
+              if (merged) {
+                slot.countsS1 = merged.countsS1;
+                slot.countsS2 = null;
+                slot.srtLossS1Db = merged.srtLossS1Db;
+                slot.srtLossS2Db = null;
+                slot.measuredSrtLossDb = merged.measuredSrtLossDb;
+                slot.measuredSrtSeDb = merged.measuredSrtSeDb;
+                slot.obsSnrPerCons = merged.obsSnrPerCons;
+                slot.meanAdaptiveSnrDb = merged.meanAdaptiveSnrDb;
+                slot.qvcvMode = merged.qvcvMode;
+                if (merged.practicePc !== null) slot.practicePc = merged.practicePc;
+                slot.hasQvcv = true;
+              }
+            }
+            const warn = idConflict
+              ? `Warning: Saved qVCV run is for '${parsed.participantId}', while current profile ID is '${state.listenerId}'.`
+              : "";
+            setImportStatus(`Loaded saved ${parsed.condition} qVCV (${state.ear}) from browser storage.`, warn);
+            syncInputsFromState();
+            recomputeAndRender();
+            saveProfileToBrowser();
+          };
+        } catch (_) {}
+      }
+
+      function computeContralateralSummaryForEar(earKey) {
+        const oppKey = oppositeEarKey(earKey);
         if (!oppKey) return null;
         const opp = state.earSlots[oppKey];
         if (!opp || !opp.hasQvcv) return null;
-        const cur = activeSlot();
-        const useOwnAud = Boolean(opp.hasOwnAudiogram);
+        const cur = state.earSlots[earKey] || activeSlot();
+        const useOwnAud = Boolean(opp.hasOwnAudiogram || opp.audiogramEstimatedFromQcls);
         const audForOpp = useOwnAud ? opp.audiogramHL : cur.audiogramHL;
         const oppRep = window.QProEngine.evaluate({
           listenerId: `${state.listenerId}_${oppKey}`,
           ear: oppKey,
           transducer: state.transducer,
+          hasAudiogram: useOwnAud,
+          audiogramEstimatedFromQcls: opp.audiogramEstimatedFromQcls,
+          hasQvcv: opp.hasQvcv,
           practicePc: opp.practicePc,
           measuredSrtLossDb: opp.measuredSrtLossDb,
           measuredSrtSeDb: opp.measuredSrtSeDb,
@@ -896,7 +1089,7 @@
         });
         return {
           ear: oppKey,
-          hasOwnAudiogram: useOwnAud,
+          hasOwnAudiogram: Boolean(opp.hasOwnAudiogram),
           pta124: oppRep.pta124,
           empPc: oppRep.empPcPooled,
           comparablePc: oppRep.comparablePc,
@@ -904,14 +1097,17 @@
         };
       }
 
-      function recomputeAndRender() {
-        const slot = activeSlot();
-        const contraSummary = computeContralateralSummaryForActiveEar();
-        const rep = window.QProEngine.evaluate({
+      function evaluateEarSlotReport(earKey, nBoot = 36) {
+        const slot = state.earSlots[earKey] || createEmptyEarSlot();
+        const contraSummary = computeContralateralSummaryForEar(earKey);
+        return window.QProEngine.evaluate({
           listenerId: state.listenerId,
           group: state.group,
-          ear: state.ear,
+          ear: earKey,
           transducer: state.transducer,
+          hasAudiogram: Boolean(slot.hasOwnAudiogram),
+          audiogramEstimatedFromQcls: Boolean(slot.audiogramEstimatedFromQcls),
+          hasQvcv: Boolean(slot.hasQvcv),
           practicePc: slot.practicePc,
           measuredSrtLossDb: slot.measuredSrtLossDb,
           measuredSrtSeDb: slot.measuredSrtSeDb,
@@ -926,9 +1122,18 @@
           countsS2: slot.countsS2,
           aided: slot.aided,
           contraSummary,
-          nBoot: 36
+          nBoot
         });
+      }
+
+      function hasBothRightAndLeftData() {
+        return slotHasAnyData(state.earSlots.Right) && slotHasAnyData(state.earSlots.Left);
+      }
+
+      function recomputeAndRender() {
+        const rep = evaluateEarSlotReport(state.ear, 36);
         state.lastReport = rep;
+        document.getElementById("print-binaural-btn").hidden = !hasBothRightAndLeftData();
         renderCurrentMode();
         document.getElementById("wasm-status").textContent = `WASM: ${rep.elapsedMs.toFixed(1)} ms`;
       }
@@ -959,12 +1164,47 @@
         window.QProReportView.renderReportSheet(primary, state.lastReport, norms, { audiogramTopDown: topDown });
         window.QProReportView.renderPrescriptionSheet(secondary, state.lastReport);
         secondary.hidden = false;
+        document.body.classList.remove("print-binaural");
         document.body.classList.add("print-packet");
 
         const cleanup = () => {
           document.body.classList.remove("print-packet");
           secondary.hidden = true;
           secondary.innerHTML = "";
+          renderCurrentMode();
+          window.removeEventListener("afterprint", cleanup);
+        };
+        window.addEventListener("afterprint", cleanup);
+        window.print();
+      }
+
+      function printFullBinauralFourPagePacket() {
+        if (!hasBothRightAndLeftData()) return;
+        const p1 = document.getElementById("report-sheet");
+        const p2 = document.getElementById("report-sheet-secondary");
+        const p3 = document.getElementById("report-sheet-p3");
+        const p4 = document.getElementById("report-sheet-p4");
+        const topDown = document.getElementById("orient-select").value === "topdown";
+        const norms = window.QPRO_DATA ? window.QPRO_DATA.norms : null;
+
+        const repR = evaluateEarSlotReport("Right", 36);
+        const repL = evaluateEarSlotReport("Left", 36);
+        window.QProReportView.renderReportSheet(p1, repR, norms, { audiogramTopDown: topDown });
+        window.QProReportView.renderPrescriptionSheet(p2, repR);
+        window.QProReportView.renderReportSheet(p3, repL, norms, { audiogramTopDown: topDown });
+        window.QProReportView.renderPrescriptionSheet(p4, repL);
+
+        p2.hidden = false;
+        p3.hidden = false;
+        p4.hidden = false;
+        document.body.classList.remove("print-packet");
+        document.body.classList.add("print-binaural");
+
+        const cleanup = () => {
+          document.body.classList.remove("print-binaural");
+          p2.hidden = true; p2.innerHTML = "";
+          p3.hidden = true; p3.innerHTML = "";
+          p4.hidden = true; p4.innerHTML = "";
           renderCurrentMode();
           window.removeEventListener("afterprint", cleanup);
         };
@@ -987,18 +1227,25 @@
         btnDiag.classList.remove("active");
         renderCurrentMode();
       };
+      document.getElementById("new-patient-btn").onclick = startNewBlankPatient;
       document.getElementById("toggle-drawer-btn").onclick = () => {
         const dr = document.getElementById("data-drawer");
         dr.hidden = !dr.hidden;
       };
       document.getElementById("print-one-btn").onclick = () => {
-        document.body.classList.remove("print-packet");
+        document.body.classList.remove("print-packet", "print-binaural");
         document.getElementById("report-sheet-secondary").hidden = true;
+        document.getElementById("report-sheet-p3").hidden = true;
+        document.getElementById("report-sheet-p4").hidden = true;
         window.print();
       };
       document.getElementById("print-both-btn").onclick = printFullTwoPagePacket;
+      document.getElementById("print-binaural-btn").onclick = printFullBinauralFourPagePacket;
 
-      demoSel.onchange = () => loadDemoIndex(Number(demoSel.value));
+      demoSel.onchange = () => {
+        if (demoSel.value === "") return;
+        loadDemoIndex(Number(demoSel.value));
+      };
 
       document.getElementById("ear-select").onchange = () => {
         readInputsToState(false);
@@ -1007,7 +1254,7 @@
         state.ear = nextEar;
         const nextSlot = activeSlot();
         /* If switching from Unspecified into an untouched ear slot, seed audiogram convenience copy */
-        if (!nextSlot.hasOwnAudiogram && !nextSlot.hasQvcv && !nextSlot.elc10x10) {
+        if (!slotHasAnyData(nextSlot) && prevSlot.hasOwnAudiogram) {
           nextSlot.audiogramHL = prevSlot.audiogramHL.slice();
         }
         syncInputsFromState();
@@ -1019,6 +1266,7 @@
       document.getElementById("recalc-btn").onclick = () => {
         readInputsToState(true);
         state.group = "Clinical";
+        demoSel.value = "";
         recomputeAndRender();
         saveProfileToBrowser();
       };
@@ -1037,6 +1285,8 @@
         state.group = picked.group || "Clinical";
         state.ear = picked.ear || "Unspecified";
         state.transducer = picked.transducer || "er3a";
+        state.isDemo = false;
+        demoSel.value = "";
         if (picked.earSlots) state.earSlots = picked.earSlots;
         syncInputsFromState();
         recomputeAndRender();
@@ -1045,6 +1295,7 @@
 
       audGrid.addEventListener("change", () => {
         readInputsToState(true);
+        demoSel.value = "";
         recomputeAndRender();
       });
 
@@ -1053,21 +1304,29 @@
         const files = Array.from(e.target.files || []).slice(0, 2);
         if (files.length === 0) return;
         readInputsToState(false);
-        const prevAud = activeSlot().audiogramHL.slice();
-        const prevHasAud = activeSlot().hasOwnAudiogram;
 
         const parsedRuns = [];
         for (const f of files) {
           parsedRuns.push(window.QProEngine.parseQvcvCsv(await f.text(), f.name));
         }
         const merged = window.QProEngine.mergeQvcvRuns(parsedRuns);
-        if (!merged) return;
+        if (!merged) {
+          setImportStatus("", "Could not parse any graded qVCV trials from the selected CSV file(s).");
+          return;
+        }
 
-        if (merged.participantId) state.listenerId = merged.participantId;
-        if (merged.ear) state.ear = merged.ear;
+        const prevAud = activeSlot().audiogramHL.slice();
+        const prevHasAud = activeSlot().hasOwnAudiogram && !state.isDemo;
+        const targetEar = merged.ear || state.ear;
+        const { idConflict } = ensureClinicalWorkspaceForImport(merged.participantId, targetEar);
+        if (targetEar) state.ear = targetEar;
 
         const slot = activeSlot();
-        if (!slot.hasOwnAudiogram && prevHasAud) {
+        if (merged.audiogramHL && !slot.hasOwnAudiogram) {
+          slot.audiogramHL = merged.audiogramHL.slice();
+          slot.hasOwnAudiogram = true;
+          slot.audiogramEstimatedFromQcls = false;
+        } else if (!slot.hasOwnAudiogram && prevHasAud) {
           slot.audiogramHL = prevAud;
           slot.hasOwnAudiogram = true;
         }
@@ -1084,11 +1343,24 @@
         slot.hasQvcv = true;
         state.group = "Clinical";
 
+        const warnings = [];
+        if (merged.idMismatch) {
+          warnings.push("Test and Retest qVCV CSVs have different Participant IDs — verify selected files.");
+        }
+        if (merged.earMismatch) {
+          warnings.push("Test and Retest qVCV CSVs are from different ears (Left vs. Right) — use Opposite Ear upload for contralateral ear.");
+        }
+        if (idConflict) {
+          warnings.push(`Uploaded qVCV CSV ID ('${merged.participantId}') differs from current Patient ID ('${state.listenerId}').`);
+        }
+
         const modeDesc = merged.isAdaptive
           ? `Adaptive (${merged.measuredSrtLossDb !== null ? (merged.measuredSrtLossDb >= 0 ? "+" : "") + merged.measuredSrtLossDb.toFixed(1) + " dB SRT Loss" : "variable SNR"})`
           : "Fixed-SNR";
+        const audNote = merged.audiogramHL ? " + embedded Audiogram" : "";
         setImportStatus(
-          `Imported ${files.length === 2 ? "Test + Retest " : ""}Unaided qVCV (${state.ear}, ${modeDesc}).`
+          `Imported ${files.length === 2 ? "Test + Retest " : ""}Unaided qVCV (${state.ear}, ${modeDesc}${audNote}).`,
+          warnings.join(" ")
         );
         syncInputsFromState();
         recomputeAndRender();
@@ -1101,17 +1373,46 @@
         if (!f) return;
         readInputsToState(false);
         const prevAud = activeSlot().audiogramHL.slice();
-        const prevHasAud = activeSlot().hasOwnAudiogram;
+        const prevHasAud = activeSlot().hasOwnAudiogram && !state.isDemo;
+        const prevEar = state.ear;
+
         const parsed = window.QProEngine.parseQclsElcCsv(await f.text(), f.name);
-        if (parsed.participantId) state.listenerId = parsed.participantId;
-        if (parsed.ear) state.ear = parsed.ear;
+        const targetEar = parsed.ear || state.ear;
+        const { idConflict } = ensureClinicalWorkspaceForImport(parsed.participantId, targetEar);
+        const earSwitched = Boolean(
+          parsed.ear &&
+          prevEar !== "Unspecified" &&
+          parsed.ear !== prevEar &&
+          slotHasAnyData(state.earSlots[prevEar])
+        );
+        if (targetEar) state.ear = targetEar;
+
         const slot = activeSlot();
-        if (!slot.hasOwnAudiogram && prevHasAud) {
-          slot.audiogramHL = prevAud;
-          slot.hasOwnAudiogram = true;
-        }
         slot.elc10x10 = parsed.elc10x10;
-        setImportStatus(`Imported qCLS contours for ${state.listenerId} (${state.ear}).`);
+        if (!slot.hasOwnAudiogram) {
+          if (!parsed.ear && prevHasAud) {
+            slot.audiogramHL = prevAud;
+            slot.hasOwnAudiogram = true;
+          } else {
+            const estAud = window.QProEngine.deriveAudiogramFromQclsElc(parsed.elc10x10, state.transducer);
+            if (estAud) {
+              slot.audiogramHL = estAud;
+              slot.audiogramEstimatedFromQcls = true;
+            }
+          }
+        }
+
+        const warnings = [];
+        if (idConflict) {
+          warnings.push(`Uploaded qCLS CSV ID ('${parsed.participantId}') differs from current Patient ID ('${state.listenerId}').`);
+        }
+        if (earSwitched) {
+          warnings.push(`Routed ${state.ear}-ear qCLS CSV into ${state.ear} slot (${prevEar}-ear data preserved).`);
+        }
+        setImportStatus(
+          `Imported qCLS contours into ${state.ear} slot for ${state.listenerId}.`,
+          warnings.join(" ")
+        );
         syncInputsFromState();
         recomputeAndRender();
         saveProfileToBrowser();
@@ -1121,12 +1422,30 @@
       document.getElementById("file-aided").onchange = async (e) => {
         const files = Array.from(e.target.files || []);
         if (files.length === 0) return;
+        readInputsToState(false);
+        const warnings = [];
+        const parsedList = [];
+        for (const f of files) {
+          parsedList.push(window.QProEngine.parseQvcvCsv(await f.text(), f.name));
+        }
+        const first = parsedList[0];
+        const targetEar = first?.ear || state.ear;
+        const { idConflict } = ensureClinicalWorkspaceForImport(first?.participantId || null, targetEar);
+        if (idConflict) {
+          warnings.push(`Aided CSV ID ('${first.participantId}') differs from current Patient ID ('${state.listenerId}').`);
+        }
+        if (first?.ear && state.ear !== "Unspecified" && first.ear !== state.ear) {
+          warnings.push(`Aided CSV ear ('${first.ear}') differs from active ear ('${state.ear}'); stored in ${first.ear} slot.`);
+          state.ear = first.ear;
+        } else if (targetEar) {
+          state.ear = targetEar;
+        }
+
         const slot = activeSlot();
         slot.aided = {};
-        for (let idx = 0; idx < files.length; idx++) {
-          const f = files[idx];
-          const parsed = window.QProEngine.parseQvcvCsv(await f.text(), f.name);
-          const lbl = files.length === 1 ? "Aided Run" : `Aided ${idx + 1}`;
+        for (let idx = 0; idx < parsedList.length; idx++) {
+          const parsed = parsedList[idx];
+          const lbl = parsedList.length === 1 ? "Aided Run" : `Aided ${idx + 1}`;
           slot.aided[lbl] = {
             label: lbl,
             counts: parsed.counts,
@@ -1135,7 +1454,8 @@
             meanSnrDb: parsed.meanSnrDb
           };
         }
-        setImportStatus(`Imported ${files.length} Aided qVCV run(s) for ${state.ear}.`);
+        setImportStatus(`Imported ${parsedList.length} Aided qVCV run(s) for ${state.ear}.`, warnings.join(" "));
+        syncInputsFromState();
         recomputeAndRender();
         saveProfileToBrowser();
       };
@@ -1144,6 +1464,7 @@
       document.getElementById("file-contra").onchange = async (e) => {
         const files = Array.from(e.target.files || []).slice(0, 2);
         if (files.length === 0) return;
+        readInputsToState(false);
         const parsedRuns = [];
         for (const f of files) {
           parsedRuns.push(window.QProEngine.parseQvcvCsv(await f.text(), f.name));
@@ -1151,12 +1472,18 @@
         const merged = window.QProEngine.mergeQvcvRuns(parsedRuns);
         if (!merged) return;
 
+        const { idConflict } = ensureClinicalWorkspaceForImport(merged.participantId, state.ear);
         if (state.ear === "Unspecified" && merged.ear === "Left") state.ear = "Right";
         else if (state.ear === "Unspecified" && merged.ear === "Right") state.ear = "Left";
         const oppKey = oppositeEarKey(state.ear) || (merged.ear === "Left" ? "Left" : "Right");
         if (state.ear === "Unspecified") state.ear = oppKey === "Left" ? "Right" : "Left";
 
         const oppSlot = state.earSlots[oppKey];
+        if (merged.audiogramHL && !oppSlot.hasOwnAudiogram) {
+          oppSlot.audiogramHL = merged.audiogramHL.slice();
+          oppSlot.hasOwnAudiogram = true;
+          oppSlot.audiogramEstimatedFromQcls = false;
+        }
         oppSlot.countsS1 = merged.countsS1;
         oppSlot.countsS2 = merged.countsS2;
         oppSlot.srtLossS1Db = merged.srtLossS1Db;
@@ -1169,65 +1496,95 @@
         if (merged.practicePc !== null) oppSlot.practicePc = merged.practicePc;
         oppSlot.hasQvcv = true;
 
+        const warnings = [];
+        if (idConflict) {
+          warnings.push(`Opposite-ear CSV ID ('${merged.participantId}') differs from current Patient ID ('${state.listenerId}').`);
+        }
+        if (merged.ear && merged.ear === state.ear) {
+          warnings.push(`Opposite-ear file is labeled '${merged.ear}', matching the active ear ('${state.ear}') — verify ear selection.`);
+        }
         const audHint = oppSlot.hasOwnAudiogram
           ? `using ${oppKey} ear audiogram`
           : `switch Ear to ${oppKey} to enter ${oppKey} audiogram if asymmetric`;
-        setImportStatus(`Imported Opposite Ear (${oppKey}) qVCV (${audHint}).`);
+        setImportStatus(`Imported Opposite Ear (${oppKey}) qVCV (${audHint}).`, warnings.join(" "));
         syncInputsFromState();
         recomputeAndRender();
         saveProfileToBrowser();
       };
 
-      /* Exports (Standardized qPRO_[ID]_[L|R|B|M]_[YYYYMMDD].csv/.json) */
+      /* Round-Trip Profile JSON Export & Import + Complete Timestamped CSV Export */
       document.getElementById("export-json-btn").onclick = () => {
         const r = state.lastReport;
         if (!r) return;
-        const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
+        readInputsToState(false);
+        const bothEars = hasBothRightAndLeftData();
+        const earReports = bothEars
+          ? { Right: evaluateEarSlotReport("Right", 36), Left: evaluateEarSlotReport("Left", 36) }
+          : null;
+        const jsonText = window.QProEngine.buildExportBundleJson({
+          activeReport: r,
+          earReports,
+          profileState: {
+            listenerId: state.listenerId,
+            group: state.group,
+            ear: state.ear,
+            transducer: state.transducer,
+            earSlots: state.earSlots
+          }
+        });
+        const blob = new Blob([jsonText], { type: "application/json;charset=utf-8" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = window.QProEngine.formatExportFilename(r.listenerId, r.ear, "json");
+        a.download = window.QProEngine.formatExportFilename(r.listenerId, bothEars ? "RL" : r.ear, "json");
         a.click();
+      };
+
+      document.getElementById("import-json-btn").onclick = () => {
+        document.getElementById("file-qpro-json").click();
+      };
+
+      document.getElementById("file-qpro-json").onchange = async (ev) => {
+        const f = ev.target.files?.[0];
+        if (!f) return;
+        const res = window.QProEngine.parseImportedProfileJson(await f.text());
+        ev.target.value = "";
+        if (!res.ok) {
+          document.getElementById("data-drawer").hidden = false;
+          setImportStatus("", `JSON import failed: ${res.error}`);
+          return;
+        }
+        const prof = res.profile;
+        state.listenerId = prof.listenerId;
+        state.group = prof.group;
+        state.ear = prof.ear;
+        state.transducer = prof.transducer;
+        state.earSlots = prof.earSlots;
+        state.isDemo = false;
+        demoSel.value = "";
+        syncInputsFromState();
+        recomputeAndRender();
+        saveProfileToBrowser();
+        setImportStatus(`Restored qPRO profile '${state.listenerId}' (${state.ear}) from ${f.name}.`);
       };
 
       document.getElementById("export-csv-btn").onclick = () => {
         const r = state.lastReport;
         if (!r) return;
-        const rx = r.prescription;
-        const fTags = ["250","500","750","1k","1_5k","2k","3k","4k","6k","8k"];
-        const cols = [
-          "listener_id","ear","qvcv_mode","phenotype","pta_124_db_hl","hf_pta_db_hl",
-          "qvcv_raw_pct","qvcv_eq_fixed_pct",
-          "total_snr_loss_db","snr_loss_se_db","inaudibility_db","recruitment_db","clarity_loss_db",
-          "hf_recruitment_db","hf_smearing","voicing_pct_nh","manner_pct_nh","place_pct_nh",
-          "rx_amp_indicated","rx_pred_aided_qvcv_pct","rx_vent","rx_wdrc_speed","rx_directionality",
-          ...fTags.map(f => `rear50_${f}`),
-          ...fTags.map(f => `rear65_${f}`),
-          ...fTags.map(f => `rear80_${f}`),
-          ...fTags.map(f => `mpo_${f}`),
-          ...fTags.map(f => `ig65_${f}`),
-          ...fTags.map(f => `ct_${f}`),
-          ...fTags.map(f => `cr_${f}`)
-        ];
-        const vals = [
-          r.listenerId, r.ear, r.qvcvMode || "standard", `"${r.phenotype}"`, r.pta124, r.hfPta,
-          r.empPcPooled, r.eqFixedPc,
-          r.totalDeficitDb, r.totalDeficitSeDb, r.audibilityDeficitDb, r.ohcDeficitDb, r.neuralDeficitDb,
-          r.hfOhcDb, r.hfSmearingLabel, r.rtrVoicingPct, r.rtrMannerPct, r.rtrPlacePct,
-          rx.ampIndicated ? 1 : 0, rx.predAidedQvcvPct,
-          `"${rx.ventLabel}"`, `"${rx.wdrcSpeedLabel}"`, `"${rx.directionalityLabel}"`,
-          ...rx.rear50Spl, ...rx.rear65Spl, ...rx.rear80Spl,
-          ...rx.mpoSpl, ...rx.ig65Db, ...(rx.ctSpl || []), ...rx.cr
-        ];
-        const csv = cols.join(",") + "\n" + vals.join(",") + "\n";
+        const bothEars = hasBothRightAndLeftData();
+        const reportsToExport = bothEars
+          ? [evaluateEarSlotReport("Right", 36), evaluateEarSlotReport("Left", 36)]
+          : [r];
+        const csv = window.QProEngine.formatSummaryCsv(reportsToExport);
         const a = document.createElement("a");
-        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-        a.download = window.QProEngine.formatExportFilename(r.listenerId, r.ear, "csv");
+        a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv;charset=utf-8" }));
+        a.download = window.QProEngine.formatExportFilename(r.listenerId, bothEars ? "RL" : r.ear, "csv");
         a.click();
       };
 
       /* Boot WebAssembly Engine */
       window.QProEngine.init().then(() => {
         refreshLocalQclsSessions();
+        refreshLocalQvcvSessions();
         refreshStoredProfilesDropdown();
         const defIdx = Math.max(0, demos.findIndex(d => d.id === "HL068"));
         demoSel.value = String(defIdx);

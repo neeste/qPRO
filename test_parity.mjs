@@ -225,6 +225,90 @@ console.log(
 /* 3. Standardized Export Filename & SVG / DOM Wiring Check */
 assert.equal(QProEngine.formatExportFilename("HL068", "Right", "csv", "20261121"), "qPRO_HL068_R_20261121.csv");
 assert.equal(QProEngine.formatExportFilename("HL068", "Left", "json", "20261121"), "qPRO_HL068_L_20261121.json");
+assert.equal(QProEngine.formatExportFilename("BT_042", "RL", "csv", "20261121", "1245"), "qPRO_BT_042_RL_20261121_1245.csv");
+assert.match(QProEngine.formatExportFilename("HL068", "Right", "csv"), /^qPRO_HL068_R_\d{8}_\d{4}\.csv$/);
+
+/* 4. Multi-underscore + duplicate-suffix filename parsing, 17-col Final_SE_dB & Audiogram_Hz_dBHL, & mismatch flags */
+const metaUnderscore = QProEngine.inferFileMeta("qVCV_BT_042_Subj_L_AIDED_ADP50_20261121_1130 (2).csv");
+assert.equal(metaUnderscore.participantId, "BT_042_Subj");
+assert.equal(metaUnderscore.ear, "Left");
+assert.equal(metaUnderscore.isAidedName, true);
+assert.equal(metaUnderscore.isAdaptiveName, true);
+
+const metaQcls = QProEngine.inferFileMeta("qCLS_ELC_BT_042_R_20261121_1105 (1).csv");
+assert.equal(metaQcls.participantId, "BT_042");
+assert.equal(metaQcls.ear, "Right");
+
+const aud17Str = "250:15;500:20;750:20;1000:25;1500:30;2000:35;3000:45;4000:55;6000:60;8000:65";
+const csv17 = [
+  "Trial,Phase,Stimulus,Target,Response,Target_SNR_dB,RT_ms,Running_SNR_Loss_dB,Running_SE_dB,Final_SNR_Loss_dB,Final_SE_dB,Mode,Condition,Ear,Presentation_SPL_dB,Noise_Offset_Samples,Audiogram_Hz_dBHL",
+  `1,Graded,"VCV_aba_1,+12SNR",B,B,12,510,5.200,1.850,4.850,0.940,adaptive_50,Unaided,Right,60,1024,"${aud17Str}"`,
+  `2,Graded,"VCV_ada_1,-2SNR",D,D,-2,530,4.850,1.420,4.850,0.940,adaptive_50,Unaided,Right,60,2048,"${aud17Str}"`
+].join("\n") + "\n";
+const parsed17 = QProEngine.parseQvcvCsv(csv17, "qVCV_BT_042_R_ADP50_20261121_1200 (1).csv");
+assert.equal(parsed17.participantId, "BT_042");
+assert.equal(parsed17.ear, "Right");
+assert.ok(Math.abs(parsed17.finalSnrLossDb - 4.85) < 1e-6);
+assert.ok(Math.abs(parsed17.finalSeDb - 0.94) < 1e-6, `Expected Final_SE_dB=0.94, got ${parsed17.finalSeDb}`);
+assert.deepEqual(parsed17.audiogramHL, [15, 20, 20, 25, 30, 35, 45, 55, 60, 65]);
+
+const mismatchMerge = QProEngine.mergeQvcvRuns([hlRun1, pNh]);
+assert.equal(mismatchMerge.idMismatch, true);
+assert.equal(mismatchMerge.earMismatch, true);
+
+/* 5. Blank / Staged Peripheral-Only Patient Guard (hasQvcv=false) + Provisional qCLS Audiogram */
+const d4 = globalThis.QPRO_DATA.demos.find(d => d.id === "HL068");
+const estAudFromQcls = QProEngine.deriveAudiogramFromQclsElc(d4.elc_10x10, "er3a");
+assert.ok(Array.isArray(estAudFromQcls) && estAudFromQcls.length === 10);
+const repPending = QProEngine.evaluate({
+  listenerId: "NEW_PT",
+  ear: "Right",
+  hasAudiogram: false,
+  audiogramEstimatedFromQcls: true,
+  hasQvcv: false,
+  audiogramHL: estAudFromQcls,
+  elc10x10: d4.elc_10x10,
+  countsS1: QProEngine.makeBlankEarSlot().countsS1
+});
+assert.equal(repPending.hasQvcv, false);
+assert.equal(repPending.nTrials, 0);
+assert.ok(repPending.phenotype.includes("PERIPHERAL PROFILE ONLY"));
+assert.ok(repPending.qcChecks.some(c => c[1].includes("qVCV") && c[0] === "WARN"));
+
+/* 6. Round-Trip JSON Export/Import & Complete Binaural Summary CSV */
+const blankSlots = {
+  Unspecified: QProEngine.makeBlankEarSlot(),
+  Right: { ...QProEngine.makeBlankEarSlot(), audiogramHL: [15, 20, 20, 25, 30, 35, 45, 55, 60, 65], hasOwnAudiogram: true, hasQvcv: true, countsS1: d4.counts_s1 },
+  Left: { ...QProEngine.makeBlankEarSlot(), audiogramHL: [25, 30, 35, 40, 45, 50, 55, 60, 65, 65], hasOwnAudiogram: true, hasQvcv: true, countsS1: hlRun1.counts }
+};
+const bundleJson = QProEngine.buildExportBundleJson({
+  activeReport: repHlAdp,
+  earReports: { Right: repNhAdp, Left: repHlAdp },
+  profileState: {
+    listenerId: "HL902",
+    group: "Clinical",
+    ear: "Left",
+    transducer: "er3a",
+    earSlots: blankSlots
+  }
+});
+const restored = QProEngine.parseImportedProfileJson(bundleJson);
+assert.equal(restored.ok, true);
+assert.equal(restored.profile.listenerId, "HL902");
+assert.equal(restored.profile.ear, "Left");
+assert.equal(restored.profile.earSlots.Right.hasQvcv, true);
+assert.deepEqual(restored.profile.earSlots.Right.audiogramHL, [15, 20, 20, 25, 30, 35, 45, 55, 60, 65]);
+
+/* Also verify legacy single-report JSON fallback import */
+const legacyRestored = QProEngine.parseImportedProfileJson(JSON.stringify(repHlAdp));
+assert.equal(legacyRestored.ok, true);
+assert.equal(legacyRestored.profile.listenerId, "HL902");
+assert.equal(legacyRestored.profile.earSlots.Left.hasQvcv, true);
+
+const summaryCsv = QProEngine.formatSummaryCsv([repNhAdp, repHlAdp]);
+const csvLines = summaryCsv.trim().split("\n");
+assert.equal(csvLines.length, 3, "Expected header + 2 ear rows in binaural CSV");
+assert.ok(csvLines[0].includes("ig50_1k") && csvLines[0].includes("ig80_4k") && csvLines[0].includes("best_aided_qvcv_pct"));
 
 const mockContainer = { innerHTML: "" };
 globalThis.QProReportView.renderReportSheet(mockContainer, repHlAdp, globalThis.QPRO_DATA.norms);
@@ -232,11 +316,16 @@ assert.ok(mockContainer.innerHTML.includes("From Adaptive SRT"));
 globalThis.QProReportView.renderPrescriptionSheet(mockContainer, repHlAdp);
 assert.ok(mockContainer.innerHTML.includes("Kneepoint CT (dB SPL)"));
 
+globalThis.QProReportView.renderReportSheet(mockContainer, repPending, globalThis.QPRO_DATA.norms);
+assert.ok(mockContainer.innerHTML.includes("Pending qVCV CSV"));
+globalThis.QProReportView.renderPrescriptionSheet(mockContainer, repPending);
+assert.ok(mockContainer.innerHTML.includes("Expected Unaided"));
+
 const indexHtml = fs.readFileSync(path.join(__dirname, "index.html"), "utf8");
 const htmlIds = new Set([...indexHtml.matchAll(/\bid="([^"]+)"/g)].map(m => m[1]));
 const jsIds = [...indexHtml.matchAll(/getElementById\("([^"]+)"\)/g)].map(m => m[1]);
 const missingIds = jsIds.filter(id => !htmlIds.has(id));
 assert.deepEqual(missingIds, [], `Missing DOM IDs in index.html: ${missingIds.join(", ")}`);
-console.log(`[PASS DOM & SVG Render] Verified all ${new Set(jsIds).size} DOM IDs in index.html and SVG Diagnostic + Rx rendering.`);
+console.log(`[PASS DOM, CSV/JSON Round-Trip & SVG Render] Verified all ${new Set(jsIds).size} DOM IDs, 17-col qVCV ingest, pending-qVCV guard, and binaural export.`);
 
 console.log("PASS: qPRO WebAssembly engine verified.");

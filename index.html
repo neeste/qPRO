@@ -122,7 +122,7 @@
     #data-drawer[hidden] { display: none; }
     .drawer-grid {
       display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(265px, 1fr));
+      grid-template-columns: repeat(auto-fit, minmax(275px, 1fr));
       gap: 14px;
       margin-top: 10px;
     }
@@ -149,7 +149,7 @@
       font-size: 11.5px;
       font-weight: 600;
       color: #334155;
-      min-width: 92px;
+      min-width: 96px;
     }
     .field-row input, .field-row select {
       flex: 1;
@@ -178,6 +178,13 @@
       font-size: 12px;
       font-weight: 600;
     }
+    #import-status-msg {
+      font-size: 11.5px;
+      color: #0369a1;
+      font-weight: 600;
+      margin-top: 6px;
+      min-height: 16px;
+    }
 
     /* ==============================================================
      * 1-PAGE US LETTER LANDSCAPE REPORT SHEET (11 : 8.5 Aspect Ratio)
@@ -185,9 +192,11 @@
     .sheet-wrap {
       padding: 12px 14px;
       display: flex;
-      justify-content: center;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
     }
-    #report-sheet {
+    .report-sheet-box {
       width: min(100%, 1340px);
       aspect-ratio: 11 / 8.5;
       background: var(--cream);
@@ -198,6 +207,9 @@
       display: flex;
       flex-direction: column;
       gap: 8px;
+    }
+    .report-sheet-box[hidden] {
+      display: none;
     }
 
     .qpro-hdr-banner {
@@ -363,7 +375,7 @@
     }
     .rx-target-table th, .rx-target-table td {
       border: 1px solid #cbd5e1;
-      padding: 4px 5px;
+      padding: 3px 5px;
       text-align: center;
     }
     .rx-target-table th:first-child, .rx-target-table td:first-child {
@@ -380,6 +392,8 @@
     .rx-bold { font-weight: 800; color: #4c1d95; }
     .rx-mpo-row td { background: #fef2f2; }
     .rx-mpo-cell { font-weight: 800; color: #991b1b; }
+    .rx-ct-row td { background: #f0f9ff; }
+    .rx-ct-cell { font-weight: 700; color: #0369a1; }
     .rx-table-note {
       font-size: clamp(9.4px, 0.80vw, 10.6px);
       color: #334155;
@@ -389,7 +403,7 @@
       padding: 4px 8px;
     }
 
-    /* Local-Privacy Screen Footer (reassures clinicians on plain HTTP; hidden when printing) */
+    /* Local-Privacy Screen Footer */
     .privacy-footer {
       max-width: 1280px;
       margin: 0 auto 20px;
@@ -403,7 +417,7 @@
     }
     .privacy-footer strong { color: #86efac; }
 
-    /* Print Exact 1-Page US Letter Landscape (Zero Page-2 Spillover) */
+    /* Print Exact US Letter Landscape (1-Page Active Sheet OR 2-Page Packet) */
     @media print {
       @page {
         size: 11in 8.5in;
@@ -415,10 +429,15 @@
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
-        overflow: hidden !important;
         background: #FAF8F4 !important;
         -webkit-print-color-adjust: exact !important;
         print-color-adjust: exact !important;
+      }
+      body:not(.print-packet) {
+        overflow: hidden !important;
+      }
+      body.print-packet {
+        overflow: visible !important;
       }
       .app-topbar, .toolbar, #data-drawer, .privacy-footer {
         display: none !important;
@@ -427,10 +446,8 @@
         display: block !important;
         padding: 0 !important;
         margin: 0 !important;
-        break-inside: avoid !important;
-        page-break-inside: avoid !important;
       }
-      #report-sheet {
+      .report-sheet-box {
         width: 100% !important;
         max-width: 10.45in !important;
         height: 7.48in !important;
@@ -443,6 +460,19 @@
         overflow: hidden !important;
         break-inside: avoid !important;
         page-break-inside: avoid !important;
+      }
+      body:not(.print-packet) #report-sheet {
+        page-break-after: avoid !important;
+      }
+      body:not(.print-packet) #report-sheet-secondary {
+        display: none !important;
+      }
+      body.print-packet #report-sheet {
+        break-after: page !important;
+        page-break-after: always !important;
+      }
+      body.print-packet #report-sheet-secondary {
+        display: flex !important;
         page-break-after: avoid !important;
       }
       .qpro-hdr-banner { padding: 5px 11px 6px !important; }
@@ -515,7 +545,8 @@
 
     <div class="toolbar-group">
       <span id="wasm-status">Loading WASM…</span>
-      <button type="button" class="btn-gold" onclick="window.print()">Print / Save Landscape PDF</button>
+      <button type="button" id="print-one-btn" class="btn-gold">Print Sheet</button>
+      <button type="button" id="print-both-btn" class="btn-teal" title="Print 2-Page Landscape Packet (Page 1: Diagnostic Profile, Page 2: Prescription / REM Sheet)">Print 2-Page Packet</button>
       <button type="button" id="export-csv-btn">Export CSV</button>
       <button type="button" id="export-json-btn">Export JSON</button>
       <a href="guide.html" class="btn btn-outline">Clinician Guide</a>
@@ -524,9 +555,12 @@
 
   <!-- Collapsible Patient Input & CSV Ingestion Drawer -->
   <section id="data-drawer" hidden>
-    <div style="display:flex;justify-content:space-between;align-items:center;">
-      <strong style="font-size:14px;color:#14284B;">Patient Measurements &amp; Web-App CSV Import (Zero Server / 100% Local Browser Memory)</strong>
-      <button type="button" class="btn btn-teal" id="recalc-btn">Re-Compute Profile (WASM)</button>
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;">
+      <strong style="font-size:14px;color:#14284B;">Patient Measurements &amp; Web-App CSV Import (Separate Left / Right Ear Slots • 100% Local Browser Memory)</strong>
+      <div style="display:flex;gap:8px;">
+        <button type="button" class="btn" id="save-profile-btn" style="background:#1e3a8a;border-color:#3b82f6;">Save Profile to Browser</button>
+        <button type="button" class="btn btn-teal" id="recalc-btn">Re-Compute Profile (WASM)</button>
+      </div>
     </div>
 
     <div class="drawer-grid">
@@ -551,46 +585,55 @@
         </div>
         <div class="field-row">
           <label for="inp-srt">Adaptive SRT Loss:</label>
-          <input type="number" id="inp-srt" step="0.1" placeholder="Optional dB SNR override">
+          <input type="number" id="inp-srt" step="0.1" placeholder="Auto-filled on Adaptive CSV">
         </div>
         <div class="field-row">
           <label for="local-qcls-sel">Saved qCLS:</label>
           <select id="local-qcls-sel"><option value="">(Check browser localStorage)</option></select>
         </div>
+        <div class="field-row">
+          <label for="saved-qpro-sel">Saved qPRO:</label>
+          <select id="saved-qpro-sel"><option value="">0 saved in browser</option></select>
+        </div>
       </div>
 
       <!-- Card 2: Pure-Tone Audiogram (10 Bands, dB HL) -->
       <div class="drawer-card">
-        <h3>2. Pure-Tone Audiogram (dB HL, 250–8000 Hz)</h3>
+        <h3>2. Pure-Tone Audiogram (<span id="aud-ear-lbl">Monaural</span>, dB HL)</h3>
         <div class="aud-grid" id="aud-inputs"></div>
+        <div style="font-size:11px;color:#475569;margin-top:6px;">
+          Tip: Switch <strong>Ear</strong> (`Right` / `Left`) in the toolbar to enter each ear's own audiogram, qCLS, and qVCV independently.
+        </div>
       </div>
 
       <!-- Card 3: CSV File Uploads (qVCV + qCLS + Aided + Contralateral) -->
       <div class="drawer-card">
-        <h3>3. Import qVCV &amp; qCLS Web-App CSVs</h3>
+        <h3>3. Import qVCV (Fixed or Adaptive) &amp; qCLS CSVs</h3>
         <div class="field-row">
-          <label for="file-qvcv">Unaided qVCV:</label>
-          <input type="file" id="file-qvcv" accept=".csv">
+          <label for="file-qvcv" title="Select 1 CSV or 2 CSVs (Test + Retest)">Unaided qVCV:</label>
+          <input type="file" id="file-qvcv" accept=".csv" multiple>
         </div>
         <div class="field-row">
           <label for="file-qcls">qCLS ELC CSV:</label>
           <input type="file" id="file-qcls" accept=".csv">
         </div>
         <div class="field-row">
-          <label for="file-aided">Aided qVCV:</label>
-          <input type="file" id="file-aided" accept=".csv">
+          <label for="file-aided" title="Select 1 or more Aided qVCV CSVs (Standard or Adaptive)">Aided qVCV:</label>
+          <input type="file" id="file-aided" accept=".csv" multiple>
         </div>
         <div class="field-row">
           <label for="file-contra">Opposite Ear qVCV:</label>
-          <input type="file" id="file-contra" accept=".csv">
+          <input type="file" id="file-contra" accept=".csv" multiple>
         </div>
+        <div id="import-status-msg"></div>
       </div>
     </div>
   </section>
 
-  <!-- 1-Page Landscape Clinical Report Sheet -->
+  <!-- 1-Page Landscape Clinical Report Sheet (+ Print-Only Second Sheet for 2-Page Packet) -->
   <main class="sheet-wrap">
-    <div id="report-sheet" aria-live="polite"></div>
+    <div id="report-sheet" class="report-sheet-box" aria-live="polite"></div>
+    <div id="report-sheet-secondary" class="report-sheet-box" hidden></div>
   </main>
 
   <footer class="privacy-footer">
@@ -604,61 +647,106 @@
     (function () {
       "use strict";
 
-      const FREQS = [250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
       const FREQ_SHORT = ["250", "500", "750", "1k", "1.5k", "2k", "3k", "4k", "6k", "8k"];
-      const CU_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
+      const PROFILE_STORE_KEY = "qpro_saved_profiles_v1";
+      const PROFILE_STORE_MAX = 35;
+
+      function createEmptyEarSlot() {
+        return {
+          audiogramHL: [20, 20, 20, 20, 25, 30, 35, 45, 50, 50],
+          hasOwnAudiogram: false,
+          elc10x10: null,
+          practicePc: null,
+          measuredSrtLossDb: null,
+          measuredSrtSeDb: null,
+          obsSnrPerCons: null,
+          meanAdaptiveSnrDb: null,
+          qvcvMode: "standard",
+          srtLossS1Db: null,
+          srtLossS2Db: null,
+          countsS1: Array.from({ length: 10 }, (_, i) => {
+            const r = new Array(11).fill(0); r[i] = 9; return r;
+          }),
+          countsS2: null,
+          aided: {},
+          hasQvcv: false
+        };
+      }
 
       const state = {
         listenerId: "HL068",
         group: "Clinical",
         ear: "Unspecified",
         transducer: "er3a",
-        practicePc: 75,
-        measuredSrtLossDb: null,
-        audiogramHL: [50, 40, 35, 30, 30, 45, 30, 55, 50, 50],
-        elc10x10: null,
-        countsS1: Array.from({ length: 10 }, (_, i) => {
-          const r = new Array(11).fill(0); r[i] = 9; return r;
-        }),
-        countsS2: null,
-        aided: {},
-        contraSummary: null,
         sheetMode: "diagnostic",
+        earSlots: {
+          Unspecified: createEmptyEarSlot(),
+          Right: createEmptyEarSlot(),
+          Left: createEmptyEarSlot(),
+          Both: createEmptyEarSlot()
+        },
         lastReport: null
       };
+
+      function activeSlot() {
+        if (!state.earSlots[state.ear]) state.earSlots[state.ear] = createEmptyEarSlot();
+        return state.earSlots[state.ear];
+      }
+
+      function oppositeEarKey(ear) {
+        if (ear === "Right") return "Left";
+        if (ear === "Left") return "Right";
+        return null;
+      }
 
       /* Build 10-frequency audiogram input boxes */
       const audGrid = document.getElementById("aud-inputs");
       FREQ_SHORT.forEach((lbl, idx) => {
         const div = document.createElement("div");
         div.className = "aud-cell";
-        div.innerHTML = `<span>${lbl} Hz</span><input type="number" min="-10" max="120" step="5" data-fidx="${idx}" value="${state.audiogramHL[idx]}">`;
+        div.innerHTML = `<span>${lbl} Hz</span><input type="number" min="-10" max="120" step="5" data-fidx="${idx}" value="30">`;
         audGrid.appendChild(div);
       });
 
+      function setImportStatus(msg) {
+        document.getElementById("import-status-msg").textContent = msg || "";
+      }
+
       function syncInputsFromState() {
+        const slot = activeSlot();
         document.getElementById("inp-id").value = state.listenerId;
         document.getElementById("ear-select").value = state.ear;
+        document.getElementById("aud-ear-lbl").textContent = state.ear === "Unspecified" ? "Monaural" : `${state.ear} Ear`;
         document.getElementById("inp-trans").value = state.transducer;
-        document.getElementById("inp-prac").value = state.practicePc !== null ? state.practicePc : "";
-        document.getElementById("inp-srt").value = state.measuredSrtLossDb !== null ? state.measuredSrtLossDb : "";
+        document.getElementById("inp-prac").value = slot.practicePc !== null && slot.practicePc !== undefined ? slot.practicePc : "";
+        document.getElementById("inp-srt").value = slot.measuredSrtLossDb !== null && slot.measuredSrtLossDb !== undefined
+          ? Number(slot.measuredSrtLossDb).toFixed(2) : "";
         audGrid.querySelectorAll("input").forEach(inp => {
           const idx = Number(inp.dataset.fidx);
-          inp.value = state.audiogramHL[idx];
+          inp.value = slot.audiogramHL[idx];
         });
       }
 
-      function readInputsToState() {
+      function readInputsToState(markAudiogramEdited = false) {
+        const slot = activeSlot();
         state.listenerId = document.getElementById("inp-id").value.trim() || "Patient";
-        state.ear = document.getElementById("ear-select").value;
         state.transducer = document.getElementById("inp-trans").value;
         const pr = document.getElementById("inp-prac").value.trim();
-        state.practicePc = pr === "" ? null : Number(pr);
+        slot.practicePc = pr === "" ? null : Number(pr);
         const srt = document.getElementById("inp-srt").value.trim();
-        state.measuredSrtLossDb = srt === "" ? null : Number(srt);
+        if (srt === "") {
+          slot.measuredSrtLossDb = null;
+          slot.measuredSrtSeDb = null;
+        } else {
+          const v = Number(srt);
+          if (slot.measuredSrtLossDb === null || Math.abs(v - slot.measuredSrtLossDb) > 0.015) {
+            slot.measuredSrtLossDb = v;
+          }
+        }
         audGrid.querySelectorAll("input").forEach(inp => {
-          state.audiogramHL[Number(inp.dataset.fidx)] = Number(inp.value || 0);
+          slot.audiogramHL[Number(inp.dataset.fidx)] = Number(inp.value || 0);
         });
+        if (markAudiogramEdited) slot.hasOwnAudiogram = true;
       }
 
       /* Populate Demo Case selector (default to Case 4 — HL068) */
@@ -678,16 +766,69 @@
         state.group = d.group;
         state.ear = d.ear || "Unspecified";
         state.transducer = d.transducer || "er3a";
-        state.practicePc = d.practice_pc;
-        state.measuredSrtLossDb = null;
-        state.audiogramHL = d.audiogram_hl.slice();
-        state.elc10x10 = d.elc_10x10 ? d.elc_10x10.map(r => r.slice()) : null;
-        state.countsS1 = d.counts_s1.map(r => r.slice());
-        state.countsS2 = d.counts_s2 ? d.counts_s2.map(r => r.slice()) : null;
-        state.aided = d.aided ? JSON.parse(JSON.stringify(d.aided)) : {};
-        state.contraSummary = null;
+        state.earSlots = {
+          Unspecified: createEmptyEarSlot(),
+          Right: createEmptyEarSlot(),
+          Left: createEmptyEarSlot(),
+          Both: createEmptyEarSlot()
+        };
+        const slot = activeSlot();
+        slot.audiogramHL = d.audiogram_hl.slice();
+        slot.hasOwnAudiogram = true;
+        slot.elc10x10 = d.elc_10x10 ? d.elc_10x10.map(r => r.slice()) : null;
+        slot.practicePc = d.practice_pc;
+        slot.measuredSrtLossDb = null;
+        slot.measuredSrtSeDb = null;
+        slot.obsSnrPerCons = null;
+        slot.meanAdaptiveSnrDb = null;
+        slot.qvcvMode = "standard";
+        slot.srtLossS1Db = null;
+        slot.srtLossS2Db = null;
+        slot.countsS1 = d.counts_s1.map(r => r.slice());
+        slot.countsS2 = d.counts_s2 ? d.counts_s2.map(r => r.slice()) : null;
+        slot.aided = d.aided ? JSON.parse(JSON.stringify(d.aided)) : {};
+        slot.hasQvcv = true;
+        setImportStatus("");
         syncInputsFromState();
         recomputeAndRender();
+      }
+
+      /* Saved qPRO Profiles in Browser localStorage */
+      function loadStoredProfiles() {
+        try { return JSON.parse(localStorage.getItem(PROFILE_STORE_KEY) || "[]"); }
+        catch (_) { return []; }
+      }
+
+      function refreshStoredProfilesDropdown() {
+        const sel = document.getElementById("saved-qpro-sel");
+        const list = loadStoredProfiles();
+        sel.innerHTML = `<option value="">${list.length} saved in browser</option>` +
+          list.map((p, i) => `<option value="${i}">${p.listenerId} (${p.ear}) ${(p.savedAt || "").slice(0, 16).replace("T", " ")}</option>`).join("");
+      }
+
+      function saveProfileToBrowser() {
+        readInputsToState(false);
+        const snap = {
+          savedAt: new Date().toISOString(),
+          listenerId: state.listenerId,
+          group: state.group,
+          ear: state.ear,
+          transducer: state.transducer,
+          earSlots: JSON.parse(JSON.stringify(state.earSlots))
+        };
+        const list = loadStoredProfiles().filter(
+          p => !(p.listenerId === snap.listenerId && p.ear === snap.ear && (p.savedAt || "").slice(0, 10) === snap.savedAt.slice(0, 10))
+        );
+        list.unshift(snap);
+        for (let keep = Math.min(list.length, PROFILE_STORE_MAX); keep >= 1; keep--) {
+          try {
+            localStorage.setItem(PROFILE_STORE_KEY, JSON.stringify(list.slice(0, keep)));
+            break;
+          } catch (_) {
+            if (keep === 1) break;
+          }
+        }
+        refreshStoredProfilesDropdown();
       }
 
       /* Populate Saved qCLS Browser Sessions from localStorage ('qcls_sessions') */
@@ -701,112 +842,90 @@
             if (sel.value === "") return;
             const rec = raw[Number(sel.value)];
             if (!rec || !rec.report || !rec.report.mu) return;
-            /* qCLS stores 9 bands (250..6000 Hz) x 10 CU boundaries in report.mu */
-            const elc10 = Array.from({ length: 10 }, () => new Array(10).fill(null));
-            for (let b = 0; b < 9; b++) {
-              for (let c = 0; c < 10; c++) elc10[b][c] = Number(rec.report.mu[b * 10 + c]);
-            }
-            state.elc10x10 = elc10;
             if (rec.id) state.listenerId = rec.id;
             if (rec.ear) {
               const e0 = rec.ear.toLowerCase();
               state.ear = e0.startsWith("r") ? "Right" : (e0.startsWith("l") ? "Left" : "Both");
             }
+            const slot = activeSlot();
+            const elc10 = Array.from({ length: 10 }, () => new Array(10).fill(null));
+            for (let b = 0; b < 9; b++) {
+              for (let c = 0; c < 10; c++) elc10[b][c] = Number(rec.report.mu[b * 10 + c]);
+            }
+            slot.elc10x10 = elc10;
             if (Array.isArray(rec.audiogramSPL) && rec.audiogramSPL.length >= 9) {
               const retspl = window.QPRO_DATA.norms.retspl[state.transducer] || window.QPRO_DATA.norms.retspl.er3a;
               for (let b = 0; b < 9; b++) {
                 if (Number.isFinite(rec.audiogramSPL[b])) {
-                  state.audiogramHL[b] = Math.round(rec.audiogramSPL[b] - retspl[b]);
+                  slot.audiogramHL[b] = Math.round(rec.audiogramSPL[b] - retspl[b]);
                 }
               }
-              state.audiogramHL[9] = state.audiogramHL[8];
+              slot.audiogramHL[9] = slot.audiogramHL[8];
+              slot.hasOwnAudiogram = true;
             }
+            setImportStatus(`Loaded saved qCLS session for ${state.listenerId} (${state.ear}).`);
             syncInputsFromState();
             recomputeAndRender();
           };
         } catch (_) {}
       }
 
-      /* CSV Parsers */
-      function parseCsvRows(text) {
-        const lines = text.split(/\r?\n/).filter(l => l.trim() && !l.trim().startsWith("#"));
-        if (lines.length < 2) return [];
-        const headers = lines[0].split(",").map(s => s.trim());
-        return lines.slice(1).map(line => {
-          const cols = line.split(",").map(s => s.trim());
-          const obj = {};
-          headers.forEach((h, i) => (obj[h] = cols[i] ?? ""));
-          return obj;
+      function computeContralateralSummaryForActiveEar() {
+        const oppKey = oppositeEarKey(state.ear);
+        if (!oppKey) return null;
+        const opp = state.earSlots[oppKey];
+        if (!opp || !opp.hasQvcv) return null;
+        const cur = activeSlot();
+        const useOwnAud = Boolean(opp.hasOwnAudiogram);
+        const audForOpp = useOwnAud ? opp.audiogramHL : cur.audiogramHL;
+        const oppRep = window.QProEngine.evaluate({
+          listenerId: `${state.listenerId}_${oppKey}`,
+          ear: oppKey,
+          transducer: state.transducer,
+          practicePc: opp.practicePc,
+          measuredSrtLossDb: opp.measuredSrtLossDb,
+          measuredSrtSeDb: opp.measuredSrtSeDb,
+          obsSnrPerCons: opp.obsSnrPerCons,
+          meanAdaptiveSnrDb: opp.meanAdaptiveSnrDb,
+          qvcvMode: opp.qvcvMode,
+          audiogramHL: audForOpp,
+          elc10x10: opp.elc10x10,
+          countsS1: opp.countsS1,
+          countsS2: opp.countsS2,
+          nBoot: 12
         });
-      }
-
-      function parseQvcvCsvText(text) {
-        const rows = parseCsvRows(text);
-        const counts = Array.from({ length: 10 }, () => new Array(11).fill(0));
-        let pracTot = 0, pracHit = 0;
-        const stims = window.QProEngine.STIM_CONS;
-        const disps = window.QProEngine.DISP_CONS;
-        for (const r of rows) {
-          const ph = (r.Phase || "").toLowerCase();
-          const tc = (r["Target Consonant"] || r.Target || r.Consonant || "").toUpperCase();
-          let ur = (r["User Response"] || r.Response || "").toUpperCase();
-          if (ur === "OTHER" || ur === "UNK") ur = "???";
-          const si = stims.indexOf(tc);
-          const ri = disps.indexOf(ur);
-          if (ph.includes("practice")) {
-            if (si >= 0) { pracTot++; if (si === ri) pracHit++; }
-          } else if (si >= 0 && ri >= 0) {
-            counts[si][ri] += 1;
-          }
-        }
         return {
-          counts,
-          practicePc: pracTot >= 5 ? Math.round((100 * pracHit) / pracTot) : null
+          ear: oppKey,
+          hasOwnAudiogram: useOwnAud,
+          pta124: oppRep.pta124,
+          empPc: oppRep.empPcPooled,
+          comparablePc: oppRep.comparablePc,
+          dNeu: oppRep.neuralDeficitDb
         };
       }
 
-      function parseQclsElcCsvText(text) {
-        const rows = parseCsvRows(text);
-        const elc = Array.from({ length: 10 }, () => new Array(10).fill(null));
-        for (const r of rows) {
-          const freq = parseFloat(r.Freq_Hz || r.Freq || "0");
-          const cu = Math.round(parseFloat(r.CU || "0"));
-          const lvl = parseFloat(r.Level_dB_SPL || r.Level || "NaN");
-          const fi = FREQS.findIndex(f0 => Math.abs(f0 - freq) / f0 < 0.04);
-          const ci = CU_LEVELS.indexOf(cu);
-          if (fi >= 0 && ci >= 0 && Number.isFinite(lvl)) elc[fi][ci] = lvl;
-        }
-        return elc;
-      }
-
-      function inferMetaFromFilename(fname) {
-        const stem = fname.replace(/\.csv$/i, "");
-        const parts = stem.split("_");
-        for (const p of parts) {
-          const u = p.toUpperCase();
-          if (u === "R" || u === "RIGHT") state.ear = "Right";
-          else if (u === "L" || u === "LEFT") state.ear = "Left";
-        }
-        if (parts.length >= 2 && (parts[0].toUpperCase() === "QVCV" || parts[0].toUpperCase() === "QCLS")) {
-          const cand = parts[1] === "ELC" ? parts[2] : parts[1];
-          if (cand) state.listenerId = cand;
-        }
-      }
-
       function recomputeAndRender() {
+        const slot = activeSlot();
+        const contraSummary = computeContralateralSummaryForActiveEar();
         const rep = window.QProEngine.evaluate({
           listenerId: state.listenerId,
           group: state.group,
           ear: state.ear,
           transducer: state.transducer,
-          practicePc: state.practicePc,
-          measuredSrtLossDb: state.measuredSrtLossDb,
-          audiogramHL: state.audiogramHL,
-          elc10x10: state.elc10x10,
-          countsS1: state.countsS1,
-          countsS2: state.countsS2,
-          aided: state.aided,
-          contraSummary: state.contraSummary,
+          practicePc: slot.practicePc,
+          measuredSrtLossDb: slot.measuredSrtLossDb,
+          measuredSrtSeDb: slot.measuredSrtSeDb,
+          obsSnrPerCons: slot.obsSnrPerCons,
+          meanAdaptiveSnrDb: slot.meanAdaptiveSnrDb,
+          qvcvMode: slot.qvcvMode,
+          srtLossS1Db: slot.srtLossS1Db,
+          srtLossS2Db: slot.srtLossS2Db,
+          audiogramHL: slot.audiogramHL,
+          elc10x10: slot.elc10x10,
+          countsS1: slot.countsS1,
+          countsS2: slot.countsS2,
+          aided: slot.aided,
+          contraSummary,
           nBoot: 36
         });
         state.lastReport = rep;
@@ -830,6 +949,29 @@
         }
       }
 
+      function printFullTwoPagePacket() {
+        if (!state.lastReport) return;
+        const primary = document.getElementById("report-sheet");
+        const secondary = document.getElementById("report-sheet-secondary");
+        const topDown = document.getElementById("orient-select").value === "topdown";
+        const norms = window.QPRO_DATA ? window.QPRO_DATA.norms : null;
+
+        window.QProReportView.renderReportSheet(primary, state.lastReport, norms, { audiogramTopDown: topDown });
+        window.QProReportView.renderPrescriptionSheet(secondary, state.lastReport);
+        secondary.hidden = false;
+        document.body.classList.add("print-packet");
+
+        const cleanup = () => {
+          document.body.classList.remove("print-packet");
+          secondary.hidden = true;
+          secondary.innerHTML = "";
+          renderCurrentMode();
+          window.removeEventListener("afterprint", cleanup);
+        };
+        window.addEventListener("afterprint", cleanup);
+        window.print();
+      }
+
       /* Wire UI Events */
       const btnDiag = document.getElementById("view-diag-btn");
       const btnRx   = document.getElementById("view-rx-btn");
@@ -849,79 +991,201 @@
         const dr = document.getElementById("data-drawer");
         dr.hidden = !dr.hidden;
       };
+      document.getElementById("print-one-btn").onclick = () => {
+        document.body.classList.remove("print-packet");
+        document.getElementById("report-sheet-secondary").hidden = true;
+        window.print();
+      };
+      document.getElementById("print-both-btn").onclick = printFullTwoPagePacket;
+
       demoSel.onchange = () => loadDemoIndex(Number(demoSel.value));
+
       document.getElementById("ear-select").onchange = () => {
-        state.ear = document.getElementById("ear-select").value;
+        readInputsToState(false);
+        const prevSlot = activeSlot();
+        const nextEar = document.getElementById("ear-select").value;
+        state.ear = nextEar;
+        const nextSlot = activeSlot();
+        /* If switching from Unspecified into an untouched ear slot, seed audiogram convenience copy */
+        if (!nextSlot.hasOwnAudiogram && !nextSlot.hasQvcv && !nextSlot.elc10x10) {
+          nextSlot.audiogramHL = prevSlot.audiogramHL.slice();
+        }
+        syncInputsFromState();
         recomputeAndRender();
       };
+
       document.getElementById("orient-select").onchange = () => recomputeAndRender();
+
       document.getElementById("recalc-btn").onclick = () => {
-        readInputsToState();
+        readInputsToState(true);
         state.group = "Clinical";
         recomputeAndRender();
+        saveProfileToBrowser();
       };
+
+      document.getElementById("save-profile-btn").onclick = () => {
+        saveProfileToBrowser();
+        setImportStatus(`Saved ${state.listenerId} (${state.ear}) to browser storage.`);
+      };
+
+      document.getElementById("saved-qpro-sel").onchange = (ev) => {
+        const idxStr = ev.target.value;
+        if (idxStr === "") return;
+        const picked = loadStoredProfiles()[Number(idxStr)];
+        if (!picked) return;
+        state.listenerId = picked.listenerId || "Patient";
+        state.group = picked.group || "Clinical";
+        state.ear = picked.ear || "Unspecified";
+        state.transducer = picked.transducer || "er3a";
+        if (picked.earSlots) state.earSlots = picked.earSlots;
+        syncInputsFromState();
+        recomputeAndRender();
+        setImportStatus(`Loaded saved qPRO profile for ${state.listenerId} (${state.ear}).`);
+      };
+
       audGrid.addEventListener("change", () => {
-        readInputsToState();
+        readInputsToState(true);
         recomputeAndRender();
       });
 
+      /* Unaided qVCV Import (supports 1 file OR 2 files for Test + Retest, both Standard & Adaptive!) */
       document.getElementById("file-qvcv").onchange = async (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
-        inferMetaFromFilename(f.name);
-        const parsed = parseQvcvCsvText(await f.text());
-        state.countsS1 = parsed.counts;
-        state.countsS2 = null;
-        state.aided = {};
+        const files = Array.from(e.target.files || []).slice(0, 2);
+        if (files.length === 0) return;
+        readInputsToState(false);
+        const prevAud = activeSlot().audiogramHL.slice();
+        const prevHasAud = activeSlot().hasOwnAudiogram;
+
+        const parsedRuns = [];
+        for (const f of files) {
+          parsedRuns.push(window.QProEngine.parseQvcvCsv(await f.text(), f.name));
+        }
+        const merged = window.QProEngine.mergeQvcvRuns(parsedRuns);
+        if (!merged) return;
+
+        if (merged.participantId) state.listenerId = merged.participantId;
+        if (merged.ear) state.ear = merged.ear;
+
+        const slot = activeSlot();
+        if (!slot.hasOwnAudiogram && prevHasAud) {
+          slot.audiogramHL = prevAud;
+          slot.hasOwnAudiogram = true;
+        }
+        slot.countsS1 = merged.countsS1;
+        slot.countsS2 = merged.countsS2;
+        slot.srtLossS1Db = merged.srtLossS1Db;
+        slot.srtLossS2Db = merged.srtLossS2Db;
+        slot.measuredSrtLossDb = merged.measuredSrtLossDb;
+        slot.measuredSrtSeDb = merged.measuredSrtSeDb;
+        slot.obsSnrPerCons = merged.obsSnrPerCons;
+        slot.meanAdaptiveSnrDb = merged.meanAdaptiveSnrDb;
+        slot.qvcvMode = merged.qvcvMode;
+        if (merged.practicePc !== null) slot.practicePc = merged.practicePc;
+        slot.hasQvcv = true;
         state.group = "Clinical";
-        if (parsed.practicePc !== null) state.practicePc = parsed.practicePc;
+
+        const modeDesc = merged.isAdaptive
+          ? `Adaptive (${merged.measuredSrtLossDb !== null ? (merged.measuredSrtLossDb >= 0 ? "+" : "") + merged.measuredSrtLossDb.toFixed(1) + " dB SRT Loss" : "variable SNR"})`
+          : "Fixed-SNR";
+        setImportStatus(
+          `Imported ${files.length === 2 ? "Test + Retest " : ""}Unaided qVCV (${state.ear}, ${modeDesc}).`
+        );
         syncInputsFromState();
         recomputeAndRender();
+        saveProfileToBrowser();
       };
 
+      /* qCLS Equal-Loudness Contour CSV Import */
       document.getElementById("file-qcls").onchange = async (e) => {
         const f = e.target.files?.[0];
         if (!f) return;
-        inferMetaFromFilename(f.name);
-        state.elc10x10 = parseQclsElcCsvText(await f.text());
+        readInputsToState(false);
+        const prevAud = activeSlot().audiogramHL.slice();
+        const prevHasAud = activeSlot().hasOwnAudiogram;
+        const parsed = window.QProEngine.parseQclsElcCsv(await f.text(), f.name);
+        if (parsed.participantId) state.listenerId = parsed.participantId;
+        if (parsed.ear) state.ear = parsed.ear;
+        const slot = activeSlot();
+        if (!slot.hasOwnAudiogram && prevHasAud) {
+          slot.audiogramHL = prevAud;
+          slot.hasOwnAudiogram = true;
+        }
+        slot.elc10x10 = parsed.elc10x10;
+        setImportStatus(`Imported qCLS contours for ${state.listenerId} (${state.ear}).`);
         syncInputsFromState();
         recomputeAndRender();
+        saveProfileToBrowser();
       };
 
+      /* Aided qVCV CSV Import (supports 1 or more Standard or Adaptive Aided runs) */
       document.getElementById("file-aided").onchange = async (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
-        const parsed = parseQvcvCsvText(await f.text());
-        state.aided["Aided Run"] = parsed.counts;
+        const files = Array.from(e.target.files || []);
+        if (files.length === 0) return;
+        const slot = activeSlot();
+        slot.aided = {};
+        for (let idx = 0; idx < files.length; idx++) {
+          const f = files[idx];
+          const parsed = window.QProEngine.parseQvcvCsv(await f.text(), f.name);
+          const lbl = files.length === 1 ? "Aided Run" : `Aided ${idx + 1}`;
+          slot.aided[lbl] = {
+            label: lbl,
+            counts: parsed.counts,
+            isAdaptive: parsed.isAdaptive,
+            finalSnrLossDb: parsed.finalSnrLossDb,
+            meanSnrDb: parsed.meanSnrDb
+          };
+        }
+        setImportStatus(`Imported ${files.length} Aided qVCV run(s) for ${state.ear}.`);
         recomputeAndRender();
+        saveProfileToBrowser();
       };
 
+      /* Opposite Ear qVCV Import (stores into opposite ear slot and uses its own audiogram if entered) */
       document.getElementById("file-contra").onchange = async (e) => {
-        const f = e.target.files?.[0];
-        if (!f) return;
-        const parsed = parseQvcvCsvText(await f.text());
-        const contraRep = window.QProEngine.evaluate({
-          listenerId: "Contra",
-          audiogramHL: state.audiogramHL,
-          elc10x10: null,
-          countsS1: parsed.counts,
-          nBoot: 12
-        });
-        state.contraSummary = {
-          pta124: contraRep.pta124,
-          empPc: contraRep.empPcPooled,
-          dNeu: contraRep.neuralDeficitDb
-        };
+        const files = Array.from(e.target.files || []).slice(0, 2);
+        if (files.length === 0) return;
+        const parsedRuns = [];
+        for (const f of files) {
+          parsedRuns.push(window.QProEngine.parseQvcvCsv(await f.text(), f.name));
+        }
+        const merged = window.QProEngine.mergeQvcvRuns(parsedRuns);
+        if (!merged) return;
+
+        if (state.ear === "Unspecified" && merged.ear === "Left") state.ear = "Right";
+        else if (state.ear === "Unspecified" && merged.ear === "Right") state.ear = "Left";
+        const oppKey = oppositeEarKey(state.ear) || (merged.ear === "Left" ? "Left" : "Right");
+        if (state.ear === "Unspecified") state.ear = oppKey === "Left" ? "Right" : "Left";
+
+        const oppSlot = state.earSlots[oppKey];
+        oppSlot.countsS1 = merged.countsS1;
+        oppSlot.countsS2 = merged.countsS2;
+        oppSlot.srtLossS1Db = merged.srtLossS1Db;
+        oppSlot.srtLossS2Db = merged.srtLossS2Db;
+        oppSlot.measuredSrtLossDb = merged.measuredSrtLossDb;
+        oppSlot.measuredSrtSeDb = merged.measuredSrtSeDb;
+        oppSlot.obsSnrPerCons = merged.obsSnrPerCons;
+        oppSlot.meanAdaptiveSnrDb = merged.meanAdaptiveSnrDb;
+        oppSlot.qvcvMode = merged.qvcvMode;
+        if (merged.practicePc !== null) oppSlot.practicePc = merged.practicePc;
+        oppSlot.hasQvcv = true;
+
+        const audHint = oppSlot.hasOwnAudiogram
+          ? `using ${oppKey} ear audiogram`
+          : `switch Ear to ${oppKey} to enter ${oppKey} audiogram if asymmetric`;
+        setImportStatus(`Imported Opposite Ear (${oppKey}) qVCV (${audHint}).`);
+        syncInputsFromState();
         recomputeAndRender();
+        saveProfileToBrowser();
       };
 
-      /* Exports */
+      /* Exports (Standardized qPRO_[ID]_[L|R|B|M]_[YYYYMMDD].csv/.json) */
       document.getElementById("export-json-btn").onclick = () => {
-        if (!state.lastReport) return;
-        const blob = new Blob([JSON.stringify(state.lastReport, null, 2)], { type: "application/json" });
+        const r = state.lastReport;
+        if (!r) return;
+        const blob = new Blob([JSON.stringify(r, null, 2)], { type: "application/json" });
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
-        a.download = `qPRO_${state.lastReport.listenerId}_${state.lastReport.ear}.json`;
+        a.download = window.QProEngine.formatExportFilename(r.listenerId, r.ear, "json");
         a.click();
       };
 
@@ -931,7 +1195,8 @@
         const rx = r.prescription;
         const fTags = ["250","500","750","1k","1_5k","2k","3k","4k","6k","8k"];
         const cols = [
-          "listener_id","ear","phenotype","pta_124_db_hl","hf_pta_db_hl","qvcv_pct",
+          "listener_id","ear","qvcv_mode","phenotype","pta_124_db_hl","hf_pta_db_hl",
+          "qvcv_raw_pct","qvcv_eq_fixed_pct",
           "total_snr_loss_db","snr_loss_se_db","inaudibility_db","recruitment_db","clarity_loss_db",
           "hf_recruitment_db","hf_smearing","voicing_pct_nh","manner_pct_nh","place_pct_nh",
           "rx_amp_indicated","rx_pred_aided_qvcv_pct","rx_vent","rx_wdrc_speed","rx_directionality",
@@ -940,27 +1205,30 @@
           ...fTags.map(f => `rear80_${f}`),
           ...fTags.map(f => `mpo_${f}`),
           ...fTags.map(f => `ig65_${f}`),
+          ...fTags.map(f => `ct_${f}`),
           ...fTags.map(f => `cr_${f}`)
         ];
         const vals = [
-          r.listenerId, r.ear, `"${r.phenotype}"`, r.pta124, r.hfPta, r.empPcPooled,
+          r.listenerId, r.ear, r.qvcvMode || "standard", `"${r.phenotype}"`, r.pta124, r.hfPta,
+          r.empPcPooled, r.eqFixedPc,
           r.totalDeficitDb, r.totalDeficitSeDb, r.audibilityDeficitDb, r.ohcDeficitDb, r.neuralDeficitDb,
           r.hfOhcDb, r.hfSmearingLabel, r.rtrVoicingPct, r.rtrMannerPct, r.rtrPlacePct,
           rx.ampIndicated ? 1 : 0, rx.predAidedQvcvPct,
           `"${rx.ventLabel}"`, `"${rx.wdrcSpeedLabel}"`, `"${rx.directionalityLabel}"`,
           ...rx.rear50Spl, ...rx.rear65Spl, ...rx.rear80Spl,
-          ...rx.mpoSpl, ...rx.ig65Db, ...rx.cr
+          ...rx.mpoSpl, ...rx.ig65Db, ...(rx.ctSpl || []), ...rx.cr
         ];
         const csv = cols.join(",") + "\n" + vals.join(",") + "\n";
         const a = document.createElement("a");
         a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-        a.download = `qPRO_${r.listenerId}_${r.ear}.csv`;
+        a.download = window.QProEngine.formatExportFilename(r.listenerId, r.ear, "csv");
         a.click();
       };
 
       /* Boot WebAssembly Engine */
       window.QProEngine.init().then(() => {
         refreshLocalQclsSessions();
+        refreshStoredProfilesDropdown();
         const defIdx = Math.max(0, demos.findIndex(d => d.id === "HL068"));
         demoSel.value = String(defIdx);
         loadDemoIndex(defIdx);

@@ -335,17 +335,19 @@
     const padL = 44, padR = 14, padT = 28, padB = 50;
     const pw = W - padL - padR, ph = H - padT - padB;
     const nhP05 = norms?.nh_pc_p05 ?? 86.5;
+    const isAdp = Boolean(rep.isAdaptiveQvcv);
+    const actualCmpPc = isAdp ? rep.eqFixedPc : rep.empPcPooled;
 
     const bars = [
       { lines: ["Normal", "Hearing", "Avg"], val: rep.pcNhRef, col: GREEN_OK },
       { lines: ["Expected:", "Audiogram", "Only"], val: rep.pcStage1Aud, col: BLUE_AUD },
       { lines: ["Expected:", "Audiogram", "+ qCLS"], val: rep.pcStage2Periph, col: CORAL_OHC },
-      { lines: ["Actual", "Unaided", "qVCV"], val: rep.empPcPooled, col: NAVY }
+      { lines: isAdp ? ["Equiv.", "Unaided", "qVCV*"] : ["Actual", "Unaided", "qVCV"], val: actualCmpPc, col: NAVY }
     ];
     for (const a of rep.aidedSessions) {
       const parts = a.aidType.split(" ");
       bars.push({
-        lines: ["Actual", parts[0] || "Aided", parts.slice(1).join(" ") || "qVCV"],
+        lines: [a.isAdaptive ? "Equiv." : "Actual", parts[0] || "Aided", (parts.slice(1).join(" ") || "qVCV") + (a.isAdaptive ? "*" : "")],
         val: a.aidedPc,
         col: a.deltaPc >= 0 ? TEAL_AID : RED_NEURAL
       });
@@ -356,9 +358,10 @@
     const bw = Math.min(50, slotW * 0.58);
     const yOf = v => padT + ((108 - v) / 108) * ph;
 
-    const gapPp = rep.empPcPooled - rep.pcStage2Periph;
+    const gapPp = actualCmpPc - rep.pcStage2Periph;
+    const titlePrefix = isAdp ? "D. Expected vs. Equiv. qVCV*" : "D. Expected vs. Actual qVCV Score";
     let svg = `<svg viewBox="0 0 ${W} ${H}" class="qpro-svg" role="img" aria-label="Expected vs Actual qVCV Score">`;
-    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">D. Expected vs. Actual qVCV Score  [Actual - Exp: ${gapPp >= 0 ? "+" : ""}${gapPp.toFixed(1)}%]</text>`;
+    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">${titlePrefix}  [Actual - Exp: ${gapPp >= 0 ? "+" : ""}${gapPp.toFixed(1)}%]</text>`;
     svg += `<rect x="${padL}" y="${padT}" width="${pw}" height="${ph}" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>`;
 
     /* NH green range */
@@ -379,10 +382,12 @@
       svg += `<rect x="${(xc - bw / 2).toFixed(1)}" y="${yb.toFixed(1)}" width="${bw.toFixed(1)}" height="${(y0 - yb).toFixed(1)}" fill="${b.col}" fill-opacity="0.88" stroke="#1E293B" stroke-width="0.8"/>`;
 
       let topRef = b.val;
-      if (idx === 3 && rep.empPcS2 !== null) {
-        topRef = Math.max(b.val, rep.empPcS1, rep.empPcS2);
-        svg += `<circle cx="${(xc - 6.5).toFixed(1)}" cy="${yOf(rep.empPcS1).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
-        svg += `<circle cx="${(xc + 6.5).toFixed(1)}" cy="${yOf(rep.empPcS2).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
+      const dot1 = isAdp ? rep.empPcS1Eq : rep.empPcS1;
+      const dot2 = isAdp ? rep.empPcS2Eq : rep.empPcS2;
+      if (idx === 3 && dot2 !== null && dot1 !== null) {
+        topRef = Math.max(b.val, dot1, dot2);
+        svg += `<circle cx="${(xc - 6.5).toFixed(1)}" cy="${yOf(dot1).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
+        svg += `<circle cx="${(xc + 6.5).toFixed(1)}" cy="${yOf(dot2).toFixed(1)}" r="4.0" fill="${GOLD}" stroke="#000" stroke-width="1.0"/>`;
       }
       svg += `<text x="${xc.toFixed(1)}" y="${yOf(Math.min(topRef + 2.2, 101)).toFixed(1)}" text-anchor="middle" font-size="10.0" font-weight="700" fill="${NAVY}">${b.val.toFixed(1)}%</text>`;
 
@@ -392,14 +397,17 @@
     });
 
     /* Lower-left legend */
-    const lx = padL + 7, ly = padT + ph - 48;
-    svg += `<rect x="${lx}" y="${ly}" width="174" height="42" rx="4" fill="#FFFFFF" fill-opacity="0.92" stroke="#CBD5E1" stroke-width="0.8"/>`;
+    const lx = padL + 7, ly = padT + ph - (isAdp ? 60 : 48);
+    svg += `<rect x="${lx}" y="${ly}" width="${isAdp ? 208 : 174}" height="${isAdp ? 54 : 42}" rx="4" fill="#FFFFFF" fill-opacity="0.92" stroke="#CBD5E1" stroke-width="0.8"/>`;
     svg += `<rect x="${lx + 7}" y="${ly + 6}" width="12" height="8" fill="#BBF7D0"/>`;
     svg += `<text x="${lx + 23}" y="${ly + 13}" font-size="8.4" fill="${SLATE}">Normal Hearing Range (&gt;=${nhP05.toFixed(0)}%)</text>`;
     svg += `<line x1="${lx + 7}" y1="${ly + 23}" x2="${lx + 19}" y2="${ly + 23}" stroke="${MUTED}" stroke-width="1.3" stroke-dasharray="3,2"/>`;
     svg += `<text x="${lx + 23}" y="${ly + 26}" font-size="8.4" fill="${SLATE}">Guessing Floor (10%)</text>`;
     svg += `<circle cx="${lx + 13}" cy="${ly + 35}" r="3.4" fill="${GOLD}" stroke="#000" stroke-width="0.9"/>`;
     svg += `<text x="${lx + 23}" y="${ly + 38}" font-size="8.4" fill="${SLATE}">Test / Retest Runs</text>`;
+    if (isAdp) {
+      svg += `<text x="${lx + 7}" y="${ly + 49}" font-size="8.0" font-weight="600" fill="${NAVY}">*From Adaptive SRT (${rep.empPcPooled.toFixed(0)}% raw tracked)</text>`;
+    }
 
     svg += `<text x="14" y="${padT + ph / 2}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${SLATE}" transform="rotate(-90 14 ${padT + ph / 2})">qVCV Consonant Recognition (%)</text>`;
     svg += `</svg>`;
@@ -417,8 +425,11 @@
     const stims = ["B", "D", "G", "K", "N", "S", "SH", "T", "V", "Z"];
     const resps = ["B", "D", "G", "K", "N", "S", "SH", "T", "V", "Z", "???"];
 
+    const eTitle = rep.isAdaptiveQvcv
+      ? "E. Consonant Confusion Pattern (%) — Adaptive-SNR Trials"
+      : "E. Consonant Confusion Pattern (%) — De-Noised Estimate";
     let svg = `<svg viewBox="0 0 ${W} ${H}" class="qpro-svg" role="img" aria-label="Consonant Confusion Matrix">`;
-    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">E. Consonant Confusion Pattern (%) — De-Noised Estimate</text>`;
+    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.6" font-weight="700" fill="${NAVY}">${eTitle}</text>`;
 
     for (let i = 0; i < 10; i++) {
       const y = padT + i * ch;
@@ -473,9 +484,11 @@
     else if (rep.ear === "Left") { earTxt = "LEFT EAR (X)"; earBg = "#2563EB"; }
     else if (rep.ear === "Both") { earTxt = "BINAURAL"; earBg = "#0F766E"; }
 
-    const s12Str = rep.empPcS2 !== null
-      ? `${rep.empPcPooled.toFixed(1)}% (Test ${rep.empPcS1.toFixed(0)}% / Retest ${rep.empPcS2.toFixed(0)}%)`
-      : `${rep.empPcPooled.toFixed(1)}% (${rep.nTrials} trials)`;
+    const s12Str = rep.isAdaptiveQvcv
+      ? `Equiv. ${rep.eqFixedPc.toFixed(1)}% (Adp ${rep.empPcPooled.toFixed(0)}%, ${rep.nTrials} tr)`
+      : (rep.empPcS2 !== null
+          ? `${rep.empPcPooled.toFixed(1)}% (Test ${rep.empPcS1.toFixed(0)}% / Retest ${rep.empPcS2.toFixed(0)}%)`
+          : `${rep.empPcPooled.toFixed(1)}% (${rep.nTrials} trials)`);
 
     const aidedHtml = rep.aidedSessions.length > 0
       ? `<span class="qpro-aided-pill">Aided: ${rep.aidedSessions.map(a => `${esc(a.aidType)}: ${a.aidedPc.toFixed(0)}% (${a.deltaPc >= 0 ? "+" : ""}${a.deltaPc.toFixed(0)}%)`).join("  •  ")}</span>`
@@ -699,13 +712,13 @@
     const W = 440, H = 462;
     const padL = 46, padR = 14, padT = 28, padB = 40;
     const pw = W - padL - padR, ph = H - padT - padB;
-    const xMin = 40, xMax = 90;
-    const yMin = 35, yMax = 125;
+    const xMin = 30, xMax = 90;
+    const yMin = 30, yMax = 125;
     const xOf = v => padL + ((v - xMin) / (xMax - xMin)) * pw;
     const yOf = v => padT + ((yMax - v) / (yMax - yMin)) * ph;
 
     let svg = `<svg viewBox="0 0 ${W} ${H}" class="qpro-svg" role="img" aria-label="WDRC Input-Output Compression Curves">`;
-    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.5" font-weight="700" fill="${NAVY}">Rx-C. WDRC Input–Output Curves &amp; Predicted Outcome</text>`;
+    svg += `<text x="${W / 2}" y="17" text-anchor="middle" font-size="11.5" font-weight="700" fill="${NAVY}">Rx-C. WDRC Input–Output Curves &amp; Kneepoints (CT)</text>`;
     svg += `<rect x="${padL}" y="${padT}" width="${pw}" height="${ph}" fill="#FFFFFF" stroke="#94A3B8" stroke-width="1"/>`;
 
     for (let yv = 40; yv <= 120; yv += 20) {
@@ -713,14 +726,14 @@
       svg += `<line x1="${padL}" y1="${y.toFixed(1)}" x2="${padL + pw}" y2="${y.toFixed(1)}" stroke="#E2E8F0" stroke-width="0.9"/>`;
       svg += `<text x="${padL - 6}" y="${(y + 3.8).toFixed(1)}" text-anchor="end" font-size="10.0" fill="${SLATE}">${yv}</text>`;
     }
-    for (let xv = 40; xv <= 90; xv += 10) {
+    for (let xv = 30; xv <= 90; xv += 10) {
       const x = xOf(xv);
       svg += `<line x1="${x.toFixed(1)}" y1="${padT}" x2="${x.toFixed(1)}" y2="${padT + ph}" stroke="#F1F5F9" stroke-width="0.9"/>`;
       svg += `<text x="${x.toFixed(1)}" y="${padT + ph + 15}" text-anchor="middle" font-size="9.8" fill="${SLATE}">${xv}</text>`;
     }
 
     /* Unity 1:1 Reference Line */
-    svg += `<line x1="${xOf(40).toFixed(1)}" y1="${yOf(40).toFixed(1)}" x2="${xOf(90).toFixed(1)}" y2="${yOf(90).toFixed(1)}" stroke="#CBD5E1" stroke-width="1.3" stroke-dasharray="4,3"/>`;
+    svg += `<line x1="${xOf(30).toFixed(1)}" y1="${yOf(30).toFixed(1)}" x2="${xOf(90).toFixed(1)}" y2="${yOf(90).toFixed(1)}" stroke="#CBD5E1" stroke-width="1.3" stroke-dasharray="4,3"/>`;
 
     /* Plot I/O curves at 1 kHz (idx 3), 2 kHz (idx 5), 4 kHz (idx 7) */
     const ioSpecs = [
@@ -729,35 +742,43 @@
       [7, "4 kHz", "#EA580C"]
     ];
     for (const [fi, lbl, col] of ioSpecs) {
+      const ct = rx.ctSpl ? rx.ctSpl[fi] : 40;
       const r50 = rx.rear50Spl[fi], r65 = rx.rear65Spl[fi], r80 = rx.rear80Spl[fi], mpo = rx.mpoSpl[fi];
       const slpLo = (r65 - r50) / 15.0;
       const slpHi = (r80 - r65) / 15.0;
-      const r40 = Math.max(35, r50 - 10.0 * Math.max(slpLo, 1.0));
+      const rCt = Math.max(ct, r50 - (50.0 - ct) * slpLo);
+      const r30 = Math.max(30, rCt - (ct - 30.0) * 1.0);
       const r90 = Math.min(mpo, r80 + 10.0 * slpHi);
-      const pts = [[40, r40], [50, r50], [65, r65], [80, r80], [90, r90]].map(([ lx, ly ]) => [xOf(lx), yOf(ly)]);
+      const pts = [[30, r30], [ct, rCt], [50, r50], [65, r65], [80, r80], [90, r90]].map(([ lx, ly ]) => [xOf(lx), yOf(ly)]);
       svg += `<polyline fill="none" stroke="${col}" stroke-width="2.4" points="${pts.map(p => `${p[0].toFixed(1)},${p[1].toFixed(1)}`).join(" ")}"/>`;
-      for (const [px, py] of pts.slice(1, 4)) {
-        svg += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.3" fill="${col}"/>`;
+      /* Solid markers at REAR 50, 65, 80 */
+      for (const [px, py] of pts.slice(2, 5)) {
+        svg += `<circle cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="3.2" fill="${col}"/>`;
       }
+      /* Open bullseye marker at Compression Kneepoint CT */
+      svg += `<circle cx="${pts[1][0].toFixed(1)}" cy="${pts[1][1].toFixed(1)}" r="4.1" fill="#FFFFFF" stroke="${col}" stroke-width="2.0"/>`;
       /* MPO horizontal cap tick near 90 dB */
       svg += `<line x1="${xOf(83).toFixed(1)}" y1="${yOf(mpo).toFixed(1)}" x2="${xOf(90).toFixed(1)}" y2="${yOf(mpo).toFixed(1)}" stroke="${col}" stroke-width="1.3" stroke-dasharray="2,2"/>`;
     }
 
     /* Predicted Aided qVCV Summary Box (top-left) */
     const bx = padL + 8, by = padT + 8;
-    const dlt = rx.predAidedQvcvPct - rep.empPcPooled;
-    svg += `<rect x="${bx}" y="${by}" width="214" height="62" rx="5" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.0"/>`;
+    const baseUnaidedPc = rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled;
+    const dlt = rx.predAidedQvcvPct - baseUnaidedPc;
+    svg += `<rect x="${bx}" y="${by}" width="218" height="62" rx="5" fill="#F0FDF4" stroke="#86EFAC" stroke-width="1.0"/>`;
     svg += `<text x="${bx + 9}" y="${by + 16}" font-size="9.2" font-weight="800" fill="#166534">BIOPHYSICAL OUTCOME PREDICTION</text>`;
-    svg += `<text x="${bx + 9}" y="${by + 34}" font-size="10.4" font-weight="700" fill="${NAVY}">Unaided qVCV: ${rep.empPcPooled.toFixed(1)}%</text>`;
+    svg += `<text x="${bx + 9}" y="${by + 34}" font-size="10.4" font-weight="700" fill="${NAVY}">Unaided qVCV${rep.isAdaptiveQvcv ? " (eq.)" : ""}: ${baseUnaidedPc.toFixed(1)}%</text>`;
     svg += `<text x="${bx + 9}" y="${by + 51}" font-size="10.6" font-weight="800" fill="${TEAL_AID}">qPRO-Rx Aided: ${rx.predAidedQvcvPct.toFixed(1)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(1)}%)</text>`;
 
-    /* Legend (bottom-right) */
-    const lx = padL + pw - 168, ly = padT + ph - 58;
-    svg += `<rect x="${lx}" y="${ly}" width="162" height="52" rx="4" fill="#FFFFFF" fill-opacity="0.94" stroke="#CBD5E1" stroke-width="0.8"/>`;
+    /* Legend (bottom-right, showing CT + CR) */
+    const lx = padL + pw - 204, ly = padT + ph - 58;
+    svg += `<rect x="${lx}" y="${ly}" width="198" height="52" rx="4" fill="#FFFFFF" fill-opacity="0.94" stroke="#CBD5E1" stroke-width="0.8"/>`;
     ioSpecs.forEach(([fi, lbl, col], idx) => {
       const iy = ly + 14 + idx * 15;
-      svg += `<line x1="${lx + 7}" y1="${iy - 3.2}" x2="${lx + 20}" y2="${iy - 3.2}" stroke="${col}" stroke-width="2.5"/>`;
-      svg += `<text x="${lx + 25}" y="${iy}" font-size="8.6" font-weight="600" fill="${SLATE}">${lbl} (CR ${rx.cr[fi].toFixed(2)} : 1)</text>`;
+      const ctVal = rx.ctSpl ? rx.ctSpl[fi] : 40;
+      svg += `<line x1="${lx + 7}" y1="${iy - 3.2}" x2="${lx + 21}" y2="${iy - 3.2}" stroke="${col}" stroke-width="2.4"/>`;
+      svg += `<circle cx="${lx + 14}" cy="${iy - 3.2}" r="3.0" fill="#FFFFFF" stroke="${col}" stroke-width="1.6"/>`;
+      svg += `<text x="${lx + 26}" y="${iy}" font-size="8.4" font-weight="600" fill="${SLATE}">${lbl}: CT ${ctVal} dB, CR ${rx.cr[fi].toFixed(2)}:1</text>`;
     });
 
     svg += `<text x="${padL + pw / 2}" y="${H - 6}" text-anchor="middle" font-size="10.5" font-weight="700" fill="${SLATE}">Input ISTS Speech Level (dB SPL)</text>`;
@@ -776,10 +797,11 @@
     else if (rep.ear === "Left") { earTxt = "LEFT EAR (X)"; earBg = "#2563EB"; }
     else if (rep.ear === "Both") { earTxt = "BINAURAL"; earBg = "#0F766E"; }
 
-    const dlt = rx.predAidedQvcvPct - rep.empPcPooled;
+    const baseUnaidedPc = rep.isAdaptiveQvcv ? rep.eqFixedPc : rep.empPcPooled;
+    const dlt = rx.predAidedQvcvPct - baseUnaidedPc;
     const statusBg = rx.ampIndicated ? TEAL_AID : (rep.neuralDeficitDb > 3.7 ? RED_NEURAL : GREEN_OK);
     const statusTxt = rx.ampIndicated
-      ? `PRESCRIPTION: AMPLIFICATION INDICATED  •  Predicted qVCV: ${rep.empPcPooled.toFixed(0)}% → ${rx.predAidedQvcvPct.toFixed(0)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(0)}%)`
+      ? `PRESCRIPTION: AMPLIFICATION INDICATED  •  Predicted qVCV: ${baseUnaidedPc.toFixed(0)}% → ${rx.predAidedQvcvPct.toFixed(0)}% (${dlt >= 0 ? "+" : ""}${dlt.toFixed(0)}%)`
       : (rep.neuralDeficitDb > 3.7
           ? "PRESCRIPTION: ACOUSTIC GAIN NOT INDICATED — Prescribe Remote-Mic / Directional SNR Support Only"
           : "PRESCRIPTION: AMPLIFICATION NOT INDICATED — Normal Peripheral & Suprathreshold Profile");
@@ -790,6 +812,10 @@
 
     const thCells = FREQ_LABELS.map(f => `<th>${f} Hz</th>`).join("");
     const rowCells = (arr, fmtFn, cls = "") => arr.map(v => `<td class="${cls}">${fmtFn(v)}</td>`).join("");
+    const ctArr = rx.ctSpl || [42, 40, 38, 38, 38, 38, 38, 38, 38, 38];
+    const ctSpeech = [ctArr[1], ctArr[3], ctArr[5], ctArr[7]];
+    const ctLo = Math.min(...ctSpeech), ctHi = Math.max(...ctSpeech);
+    const ctRangeTxt = ctLo === ctHi ? `${ctLo} dB SPL` : `${ctLo}–${ctHi} dB SPL`;
 
     container.innerHTML = `
       <div class="qpro-hdr-banner">
@@ -834,6 +860,7 @@
               <tr><td><strong>Insertion Gain IG50 (dB)</strong></td>${rowCells(rx.ig50Db, v => Math.round(v))}</tr>
               <tr class="rx-hl-row"><td><strong>Insertion Gain IG65 (dB)</strong></td>${rowCells(rx.ig65Db, v => Math.round(v), "rx-bold")}</tr>
               <tr><td><strong>Insertion Gain IG80 (dB)</strong></td>${rowCells(rx.ig80Db, v => Math.round(v))}</tr>
+              <tr class="rx-ct-row"><td><strong>Kneepoint CT (dB SPL)</strong></td>${rowCells(ctArr, v => v, "rx-ct-cell")}</tr>
               <tr><td><strong>Compression Ratio (CR : 1)</strong></td>${rowCells(rx.cr, v => v.toFixed(2))}</tr>
             </tbody>
           </table>
@@ -848,8 +875,8 @@
           <div class="f-sec-hdr">1. ACOUSTIC COUPLING &amp; VENTING</div>
           <div class="f-conf-line">${esc(rx.ventLabel)}</div>
 
-          <div class="f-sec-hdr">2. WDRC TIME CONSTANTS &amp; KNEEPOINT</div>
-          <div class="f-conf-line">${esc(rx.wdrcSpeedLabel)} (Compression threshold ~45 dB SPL).</div>
+          <div class="f-sec-hdr">2. WDRC TIME CONSTANTS &amp; KNEEPOINT (CT)</div>
+          <div class="f-conf-line">${esc(rx.wdrcSpeedLabel)} (0.5–4 kHz CT = <strong>${ctRangeTxt}</strong>, anchored near qCLS CU 10).</div>
 
           <div class="f-sec-hdr">3. DIRECTIONALITY &amp; ASSISTIVE SNR TECH</div>
           <div class="f-conf-line has-conf">${esc(rx.directionalityLabel)}</div>

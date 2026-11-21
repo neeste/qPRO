@@ -19,7 +19,7 @@ qpro_core.wasm qpro_core.js: qpro_core.c qpro_model.h build_wasm.py
 # Optional Emscripten build target matching qCLS/Makefile:
 emcc: qpro_core.c qpro_model.h
 	$(EMCC) $(EMFLAGS) qpro_core.c -o qpro_emcc.js \
-		-s EXPORTED_FUNCTIONS="['_qpro_get_in_ptr','_qpro_get_out_ptr','_qpro_evaluate','_qpro_eq_snr_deficit']" \
+		-s EXPORTED_FUNCTIONS="['_qpro_get_in_ptr','_qpro_get_out_ptr','_qpro_evaluate','_qpro_eq_snr_deficit','_qpro_eq_pc_from_deficit']" \
 		-s EXPORTED_RUNTIME_METHODS="['ccall','cwrap','HEAPF64']" -lm
 
 test: qpro_core.wasm qpro_core.js

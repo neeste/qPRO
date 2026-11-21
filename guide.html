@@ -32,27 +32,57 @@
     </ul>
   </div>
 
-  <h2>2. Empirical Normal-Hearing Cutoffs</h2>
-  <table>
-    <thead>
-      <tr><th>Clinical Metric</th><th>Normal Limit</th><th>Clinical Interpretation Above Cutoff</th></tr>
-    </thead>
-    <tbody>
-      <tr><td>Total Estimated SNR Loss</td><td><code>&le; +4.5 dB</code></td><td>Mild (<code>4.6–8.0 dB</code>), Moderate (<code>8.1–15.0 dB</code>), Severe (<code>&gt; 15.0 dB</code>)</td></tr>
-      <tr><td>1. Inaudibility SNR Loss</td><td><code>&le; +1.0 dB</code></td><td>Portion of SIN difficulty recoverable with frequency-specific gain</td></tr>
-      <tr><td>2. Recruitment &amp; Masking Loss</td><td><code>&le; +0.8 dB</code></td><td>Use moderate WDRC, cap MPO at <code>CU 50</code>, avoid excess LF gain</td></tr>
-      <tr><td>3. Suprathreshold Clarity Loss</td><td><code>&le; +3.7 dB</code></td><td>Gain alone will not normalize SIN; recommend directional / remote-mic</td></tr>
-      <tr><td>Normal-Hearing qVCV Score</td><td><code>&ge; 86.5%</code></td><td>5th percentile lower limit of Normal-Hearing adults (median <code>99.0%</code>)</td></tr>
-    </tbody>
-  </table>
+  <h2>2. Severity, Smearing &amp; Normative Label Definitions</h2>
+  <div class="card">
+    <p><strong>Important Distinction from ASHA / WHO Pure-Tone Categories:</strong> Because audiometric organizations define pure-tone degree-of-loss labels differently (e.g., ASHA uses <code>&le; 15 dB HL</code> Normal / <code>16–25 dB</code> Slight / <code>26–40 dB</code> Mild, whereas WHO uses 4-frequency PTA <code>&lt; 20 dB HL</code> Normal / <code>20–34 dB</code> Mild), <strong>qPRO never uses ambiguous pure-tone severity words for the audiogram itself</strong> (reporting exact <code>dB HL</code> values and shading the adult clinical reference zone <code>&le; 20 dB HL</code>). Instead, the <code>Min / Mild / Mod / Sev</code> and <code>Normal / Mild / Moderate / Severe</code> tags in qPRO have two specific, quantitative suprathreshold definitions:</p>
+
+    <h3>A. Panel B Bar Tags (<code>Min</code>, <code>Mild</code>, <code>Mod</code>, <code>Sev</code>) — Cochlear Spectral Smearing</h3>
+    <p>Printed at the tips of the bars in <strong>Panel B</strong> (and summarized in the Panel B title). These indicate <strong>auditory filter broadening</strong> (Equivalent Rectangular Bandwidth multiplier, <code>ERB = 1 + 1.8 &times; HL<sub>OHC</sub> / 50</code>) caused by Outer Hair Cell (<code>OHC</code>) loss—<em>not</em> total pure-tone threshold category:</p>
+    <table>
+      <thead>
+        <tr><th>Panel B Label</th><th>Auditory Filter Width (<code>&times; Normal ERB</code>)</th><th>Corresponding OHC Loss (<code>HL<sub>OHC</sub></code>)</th><th>Functional Acoustic Meaning</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong><code>Min</code></strong> (Minimal)</td><td><code>&lt; 1.25&times;</code> Normal</td><td><code>&lt; 7 dB</code></td><td>Sharp, normal cochlear frequency selectivity</td></tr>
+        <tr><td><strong><code>Mild</code></strong></td><td><code>1.25&times; – 1.59&times;</code> Normal</td><td><code>7 – 16 dB</code></td><td>Mild tuning loss; minimal upward masking</td></tr>
+        <tr><td><strong><code>Mod</code></strong> (Moderate)</td><td><code>1.60&times; – 2.09&times;</code> Normal</td><td><code>17 – 30 dB</code></td><td>Broadened filters; vowel energy begins masking consonant cues</td></tr>
+        <tr><td><strong><code>Sev</code></strong> (Severe)</td><td><code>&ge; 2.10&times;</code> Normal (up to <code>~3.0&times;</code>)</td><td><code>&ge; 31 dB</code> (up to <code>55 dB</code> max OHC)</td><td>Broad passive cochlear tuning; strong upward spread of masking</td></tr>
+      </tbody>
+    </table>
+
+    <h3>B. Header &amp; Panel C Cutoffs — Functional Estimated SNR Loss (<code>dB</code>)</h3>
+    <p>Analogous to clinical QuickSIN categories, classifying the extra signal-to-noise ratio (in <code>dB</code>) a listener needs relative to the 32-listener Normal-Hearing reference cohort:</p>
+    <table>
+      <thead>
+        <tr><th>Clinical Metric</th><th>Normal Limit</th><th>Severity Cutoffs &amp; Clinical Interpretation</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>Total Estimated SNR Loss</td><td><strong>Normal:</strong> <code>&le; +4.5 dB</code></td><td><strong>Mild:</strong> <code>+4.6 to +8.0 dB</code> &middot; <strong>Moderate:</strong> <code>+8.1 to +15.0 dB</code> &middot; <strong>Severe:</strong> <code>&gt; +15.0 dB</code></td></tr>
+        <tr><td>1. Inaudibility SNR Loss</td><td><code>&le; +1.0 dB</code></td><td>Portion of SIN difficulty recoverable with frequency-specific gain</td></tr>
+        <tr><td>2. Recruitment &amp; Masking Loss</td><td><code>&le; +0.8 dB</code></td><td>Use moderate WDRC, cap MPO at <code>CU 50</code>, avoid excess LF gain</td></tr>
+        <tr><td>3. Suprathreshold Clarity Loss</td><td><code>&le; +3.7 dB</code></td><td>Gain alone will not normalize SIN; recommend directional / remote-mic</td></tr>
+        <tr><td>Normal-Hearing qVCV Score</td><td><code>&ge; 86.5%</code></td><td>5th percentile lower limit of Normal-Hearing adults (median <code>99.0%</code>)</td></tr>
+      </tbody>
+    </table>
+  </div>
 
   <h2>3. Hearing-Aid Prescription &amp; REM Sheet (<code>qPRO-Rx</code>)</h2>
   <div class="card">
     <p>Use the <strong>Prescription / REM Sheet</strong> toggle in the top toolbar to view and print an individualized Real-Ear Aided Response (<code>REAR</code>) and Insertion Gain prescription across <code>250–8000 Hz</code>:</p>
     <ul>
-      <li><strong>Loudness-Mapped Targets (<code>qCLS</code>):</strong> Maps Soft (<code>50 dB</code>), Average (<code>65 dB</code>), and Loud (<code>80 dB SPL</code>) ISTS speech bands onto the patient's measured <code>qCLS</code> contours (with audiogram NAL-style fallback if <code>qCLS</code> is unavailable) and anchors the <strong>MPO Cap</strong> directly to <code>CU 50</code>.</li>
+      <li><strong>Loudness-Mapped Targets &amp; Kneepoints (<code>qCLS</code>):</strong> Maps Soft (<code>50 dB</code>), Average (<code>65 dB</code>), and Loud (<code>80 dB SPL</code>) ISTS speech bands onto the patient's measured <code>qCLS</code> contours (with audiogram NAL-style fallback if <code>qCLS</code> is unavailable), derives frequency-specific <strong>Soft-Speech Compression Kneepoints (<code>CT</code>, <code>dB SPL</code>)</strong> near <code>CU 10</code> (bounded above ambient room noise), and anchors the <strong>MPO Cap</strong> directly to <code>CU 50</code>.</li>
       <li><strong>Speech-in-Noise Guardrails:</strong> Automatically restrains low-frequency gain (<code>&lt; 1 kHz</code>) when high-frequency recruitment/smearing would cause upward spread of masking, caps high-frequency gain on severe clarity-loss bands (<code>&ge; 3 kHz</code>) to avoid distortion, and limits channel WDRC compression ratios to <code>&le; 2.8 : 1</code> (with slow release <code>&ge; 400 ms</code> when envelope cue clarity is reduced).</li>
       <li><strong>Biophysical Outcome Prediction:</strong> Simulates the patient's <strong>Predicted Aided qVCV (%)</strong> under the prescribed gain and WDRC settings so clinicians can verify real-ear aided speech recognition against an individualized expectation.</li>
+    </ul>
+  </div>
+
+  <h2>4. Importing Fixed &amp; Adaptive Web-App Data, Binaural Ears, &amp; Printing</h2>
+  <div class="card">
+    <ul>
+      <li><strong>Standard Fixed-SNR &amp; Adaptive-SNR <code>qVCV</code> CSVs:</strong> When importing an Adaptive <code>qVCV</code> CSV (<code>ADP50</code> or <code>ADP100</code>), qPRO automatically reads <code>Final_SNR_Loss_dB</code>, tracker SE, and per-consonant presented SNRs, conditioning peripheral cue extraction at the actual test SNRs and mapping recognition onto the apples-to-apples Fixed-SNR Equivalent <code>%</code> scale in Panel D (for both unaided and aided runs).</li>
+      <li><strong>Test + Retest Multi-File Upload:</strong> Select two CSV files simultaneously in <strong>Unaided qVCV</strong> to pool Test and Retest runs, plot Test/Retest markers in Panel D, and run the automated repeatability check in Panel F.</li>
+      <li><strong>Independent Left &amp; Right Ear Slots:</strong> Switch <strong>Ear</strong> (<code>Right (O)</code> &harr; <code>Left (X)</code>) in the toolbar to enter each ear's own audiogram, <code>qCLS</code>, and <code>qVCV</code>; qPRO automatically cross-checks interaural symmetry using each ear's own thresholds and saves profiles in local browser storage.</li>
+      <li><strong>1-Page Sheet or 2-Page Full Packet PDF:</strong> Click <strong>Print Sheet</strong> for the active view, or <strong>Print 2-Page Packet</strong> to save both the Diagnostic Profile (Page 1) and Prescription / REM Sheet (Page 2) in a single US Letter Landscape PDF.</li>
     </ul>
   </div>
 </body>

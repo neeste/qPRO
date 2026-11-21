@@ -55,6 +55,7 @@ def main() -> None:
         check=True,
     )
     clean_wasm = strip_custom_sections(raw_o.read_bytes())
+    out_wasm.unlink(missing_ok=True)
     out_wasm.write_bytes(clean_wasm)
     b64_wasm = base64.b64encode(clean_wasm).decode("ascii")
 
@@ -132,7 +133,7 @@ def main() -> None:
       sp,
       exports: instance.exports,
       inF64: new Float64Array(mem.buffer, inPtr, 256),
-      outF64: new Float64Array(mem.buffer, outPtr, 420)
+      outF64: new Float64Array(mem.buffer, outPtr, 430)
     }};
     return _engine;
   }}
@@ -195,6 +196,14 @@ def main() -> None:
     inF64[224] = params.seed ?? 20261116;
     inF64[225] = (params.measuredSrtLossDb !== null && params.measuredSrtLossDb !== undefined && params.measuredSrtLossDb !== "")
       ? Number(params.measuredSrtLossDb) : -999.0;
+    inF64[226] = (params.measuredSrtSeDb !== null && params.measuredSrtSeDb !== undefined && params.measuredSrtSeDb !== "")
+      ? Number(params.measuredSrtSeDb) : -999.0;
+    const obsSnr = Array.isArray(params.obsSnrPerCons) && params.obsSnrPerCons.length === 10
+      ? params.obsSnrPerCons : null;
+    inF64[227] = obsSnr ? 1.0 : 0.0;
+    if (obsSnr) {{
+      for (let c = 0; c < 10; c++) inF64[228 + c] = Number(obsSnr[c] ?? 0.0);
+    }}
 
     const t0 = (typeof performance !== "undefined") ? performance.now() : Date.now();
     exports.qpro_evaluate();
@@ -212,8 +221,15 @@ def main() -> None:
     const hfPta = outF64[5];
     const empPc = outF64[6];
     const unkPct = outF64[7];
+    const eqFixedPc = outF64[34];
+    const isAdaptiveQvcv = outF64[35] > 0.5;
+    const baseComparablePc = isAdaptiveQvcv ? eqFixedPc : empPc;
     const empPcS1 = s1Sum > 0 ? (100.0 * s1Diag / s1Sum) : empPc;
     const empPcS2 = s2Sum > 0 ? (100.0 * s2Diag / s2Sum) : null;
+    const empPcS1Eq = (params.srtLossS1Db !== null && params.srtLossS1Db !== undefined && Number.isFinite(Number(params.srtLossS1Db)))
+      ? Number(exports.qpro_eq_pc_from_deficit(Number(params.srtLossS1Db)).toFixed(1)) : null;
+    const empPcS2Eq = (params.srtLossS2Db !== null && params.srtLossS2Db !== undefined && Number.isFinite(Number(params.srtLossS2Db)))
+      ? Number(exports.qpro_eq_pc_from_deficit(Number(params.srtLossS2Db)).toFixed(1)) : null;
 
     const dTot = outF64[13];
     const seTot = outF64[14];
@@ -247,11 +263,13 @@ def main() -> None:
       smoothedCcm.push(Array.from(outF64.slice(95 + i * 11, 95 + (i + 1) * 11)));
     }}
 
-    /* Aided sessions */
+    /* Aided sessions (supports both legacy 10x11 count matrix and adaptive aided objects) */
     const aidedSessions = [];
     if (params.aided && typeof params.aided === "object") {{
-      for (const [aidKey, cMat] of Object.entries(params.aided)) {{
-        if (!cMat) continue;
+      for (const [aidKey, aidEntry] of Object.entries(params.aided)) {{
+        if (!aidEntry) continue;
+        const isObj = !Array.isArray(aidEntry) && typeof aidEntry === "object" && Array.isArray(aidEntry.counts);
+        const cMat = isObj ? aidEntry.counts : aidEntry;
         let aSum = 0, aDiag = 0;
         for (let i = 0; i < 10; i++) {{
           for (let j = 0; j < 11; j++) {{
@@ -260,14 +278,25 @@ def main() -> None:
           }}
         }}
         if (aSum > 0) {{
-          const aPc = 100.0 * aDiag / aSum;
-          const dEq = exports.qpro_eq_snr_deficit(aPc);
-          const aType = aidKey.includes("HA") ? "Lab Aid" : (aidKey.includes("HP") ? "Personal Aid" : aidKey);
+          const rawAidedPc = 100.0 * aDiag / aSum;
+          const aidAdaptive = Boolean(isObj && aidEntry.isAdaptive && Number.isFinite(Number(aidEntry.finalSnrLossDb)));
+          const dEq = aidAdaptive
+            ? Number(aidEntry.finalSnrLossDb)
+            : exports.qpro_eq_snr_deficit(rawAidedPc);
+          const aPc = aidAdaptive
+            ? exports.qpro_eq_pc_from_deficit(dEq)
+            : rawAidedPc;
+          const aType = (isObj && aidEntry.label)
+            ? aidEntry.label
+            : (aidKey.includes("HA") ? "Lab Aid" : (aidKey.includes("HP") ? "Personal Aid" : aidKey));
           aidedSessions.push({{
             aidId: aidKey,
             aidType: aType,
+            isAdaptive: aidAdaptive,
+            rawAdaptivePc: aidAdaptive ? Number(rawAidedPc.toFixed(1)) : null,
+            aidedSnrLossDb: Number(dEq.toFixed(2)),
             aidedPc: Number(aPc.toFixed(1)),
-            deltaPc: Number((aPc - empPc).toFixed(1)),
+            deltaPc: Number((aPc - baseComparablePc).toFixed(1)),
             snrBenefitDb: Number((dTot - dEq).toFixed(2))
           }});
         }}
@@ -319,22 +348,30 @@ def main() -> None:
     }}
 
     if (empPcS2 !== null) {{
-      const diff12 = Math.abs(empPcS1 - empPcS2);
-      qcChecks.push([diff12 <= 10.0 ? "PASS" : "WARN", "Repeatability & '???' Unsure Rate", `Test ${{empPcS1.toFixed(0)}}% / Retest ${{empPcS2.toFixed(0)}}% (${{diff12.toFixed(0)}}% diff); '???' unsure button used ${{unkPct.toFixed(1)}}%.`]);
+      if (empPcS1Eq !== null && empPcS2Eq !== null) {{
+        const dSrt = Math.abs(Number(params.srtLossS1Db) - Number(params.srtLossS2Db));
+        qcChecks.push([dSrt <= 2.5 ? "PASS" : "WARN", "Adaptive Test–Retest & '???' Rate", `SRT Loss ${{Number(params.srtLossS1Db).toFixed(1)}} / ${{Number(params.srtLossS2Db).toFixed(1)}} dB (|Δ|=${{dSrt.toFixed(1)}} dB); '???' used ${{unkPct.toFixed(1)}}%.`]);
+      }} else {{
+        const diff12 = Math.abs(empPcS1 - empPcS2);
+        qcChecks.push([diff12 <= 10.0 ? "PASS" : "WARN", "Repeatability & '???' Unsure Rate", `Test ${{empPcS1.toFixed(0)}}% / Retest ${{empPcS2.toFixed(0)}}% (${{diff12.toFixed(0)}}% diff); '???' unsure button used ${{unkPct.toFixed(1)}}%.`]);
+      }}
     }} else {{
-      qcChecks.push([unkPct <= 8.0 ? "PASS" : "WARN", "Response Caution ('???' Unsure)", `${{nTrials}}-trial run; '???' unsure button used on ${{unkPct.toFixed(1)}}% of trials.`]);
+      const modeNote = isAdaptiveQvcv ? `${{nTrials}}-trial adaptive run (${{empPc.toFixed(0)}}% tracked accuracy)` : `${{nTrials}}-trial run`;
+      qcChecks.push([unkPct <= 8.0 ? "PASS" : "WARN", "Response Caution ('???' Unsure)", `${{modeNote}}; '???' unsure button used on ${{unkPct.toFixed(1)}}% of trials.`]);
     }}
 
     let asymFlag = false;
     if (params.contraSummary) {{
+      const contraCmpPc = params.contraSummary.comparablePc ?? params.contraSummary.empPc;
       const dPta = Math.abs(pta124 - params.contraSummary.pta124);
-      const dPc  = Math.abs(empPc - params.contraSummary.empPc);
+      const dPc  = Math.abs(baseComparablePc - contraCmpPc);
       const dNeuLR = Math.abs(dNeu - params.contraSummary.dNeu);
+      const srcNote = params.contraSummary.hasOwnAudiogram === false ? " (shared audiogram)" : "";
       if (dPta >= 15.0 || dPc >= 15.0 || dNeuLR >= 4.0) {{
         asymFlag = true;
-        qcChecks.push(["ALERT", "Interaural Asymmetry", `|ΔPTA|=${{dPta.toFixed(0)}} dB, |ΔqVCV|=${{dPc.toFixed(0)}}%, |ΔClarity|=${{dNeuLR.toFixed(1)}} dB — consider medical/otologic evaluation.`]);
+        qcChecks.push(["ALERT", "Interaural Asymmetry", `|ΔPTA|=${{dPta.toFixed(0)}} dB, |ΔqVCV|=${{dPc.toFixed(0)}}%, |ΔClarity|=${{dNeuLR.toFixed(1)}} dB${{srcNote}} — consider medical/otologic evaluation.`]);
       }} else {{
-        qcChecks.push(["PASS", "Binaural Symmetry", `Symmetric with opposite ear (|ΔPTA|=${{dPta.toFixed(0)}} dB, |ΔqVCV|=${{dPc.toFixed(0)}}%).`]);
+        qcChecks.push(["PASS", "Binaural Symmetry", `Symmetric with opposite ear (|ΔPTA|=${{dPta.toFixed(0)}} dB, |ΔqVCV|=${{dPc.toFixed(0)}}%)${{srcNote}}.`]);
       }}
     }}
 
@@ -368,12 +405,12 @@ def main() -> None:
         const bestAid = aidedSessions.reduce((a, b) => a.aidedPc >= b.aidedPc ? a : b);
         const worstAid = aidedSessions.reduce((a, b) => a.aidedPc <= b.aidedPc ? a : b);
         if (worstAid.deltaPc <= -4.0) {{
-          recs.push(`AIDED ROLLOVER ALERT: Score dropped from ${{empPc.toFixed(0)}}% unaided to ${{worstAid.aidedPc.toFixed(0)}}% (${{worstAid.aidType}}). Reduce low/mid-band gain, slow WDRC release times, and verify real-ear output.`);
+          recs.push(`AIDED ROLLOVER ALERT: Score dropped from ${{baseComparablePc.toFixed(0)}}% unaided to ${{worstAid.aidedPc.toFixed(0)}}% (${{worstAid.aidType}}). Reduce low/mid-band gain, slow WDRC release times, and verify real-ear output.`);
         }} else if (bestAid.deltaPc >= 15.0 && bestAid.aidedPc >= 80.0) {{
-          recs.push(`AIDED VERIFICATION PASS: Amplification improved qVCV from ${{empPc.toFixed(0)}}% to ${{bestAid.aidedPc.toFixed(0)}}% (${{bestAid.aidType}}), confirming preserved speech clarity once audibility is restored.`);
+          recs.push(`AIDED VERIFICATION PASS: Amplification improved qVCV from ${{baseComparablePc.toFixed(0)}}% to ${{bestAid.aidedPc.toFixed(0)}}% (${{bestAid.aidType}}), confirming preserved speech clarity once audibility is restored.`);
         }} else if (bestAid.aidedPc < 65.0) {{
           const drTxt = dynHf !== null ? ` and ${{dynHf.toFixed(0)}} dB HF dynamic range` : "";
-          recs.push(`AIDED CLARITY CEILING: Aided score plateaued at ${{bestAid.aidedPc.toFixed(0)}}% (vs. ${{empPc.toFixed(0)}}% unaided) due to +${{dNeu.toFixed(1)}} dB suprathreshold clarity loss${{drTxt}} — recommend directional mics or a Remote Microphone / DM system.`);
+          recs.push(`AIDED CLARITY CEILING: Aided score plateaued at ${{bestAid.aidedPc.toFixed(0)}}% (vs. ${{baseComparablePc.toFixed(0)}}% unaided) due to +${{dNeu.toFixed(1)}} dB suprathreshold clarity loss${{drTxt}} — recommend directional mics or a Remote Microphone / DM system.`);
         }}
       }} else if (neuElev) {{
         recs.push(`Speech-in-Noise Technology & Counseling: +${{dNeu.toFixed(1)}} dB suprathreshold clarity loss will not be resolved by gain alone. Recommend directional or remote-microphone technology in noise, realistic counseling, and standard audiologic follow-up if asymmetric.`);
@@ -424,6 +461,7 @@ def main() -> None:
       ig65Db:    Array.from(outF64.slice(375, 385)).map(v => Number(v.toFixed(1))),
       ig80Db:    Array.from(outF64.slice(385, 395)).map(v => Number(v.toFixed(1))),
       cr:        Array.from(outF64.slice(395, 405)).map(v => Number(v.toFixed(2))),
+      ctSpl:     Array.from(outF64.slice(415, 425)).map(v => Math.round(v)),
       reur65Spl: Array.from(outF64.slice(405, 415)).map(v => Math.round(v))
     }};
 
@@ -438,8 +476,16 @@ def main() -> None:
       pta124: Number(pta124.toFixed(1)),
       lfPta: Number(lfPta.toFixed(1)),
       hfPta: Number(hfPta.toFixed(1)),
+      isAdaptiveQvcv,
+      qvcvMode: params.qvcvMode || (isAdaptiveQvcv ? "adaptive" : "standard"),
+      meanAdaptiveSnrDb: (params.meanAdaptiveSnrDb !== null && params.meanAdaptiveSnrDb !== undefined && Number.isFinite(Number(params.meanAdaptiveSnrDb)))
+        ? Number(Number(params.meanAdaptiveSnrDb).toFixed(1)) : null,
+      eqFixedPc: Number(eqFixedPc.toFixed(1)),
+      comparablePc: Number(baseComparablePc.toFixed(1)),
       empPcS1: Number(empPcS1.toFixed(1)),
       empPcS2: empPcS2 !== null ? Number(empPcS2.toFixed(1)) : null,
+      empPcS1Eq,
+      empPcS2Eq,
       empPcPooled: Number(empPc.toFixed(1)),
       unkPct: Number(unkPct.toFixed(1)),
       pcNhRef: Number(outF64[8].toFixed(1)),
@@ -481,11 +527,263 @@ def main() -> None:
     }};
   }}
 
-  const api = {{ init, evaluate, STIM_CONS, DISP_CONS }};
+  const REF_SNR_DB = [18.0, 4.0, 3.0, 0.0, 15.0, 0.0, 0.0, 0.0, 18.0, 0.0];
+  const AUD_FREQS_HZ = [250, 500, 750, 1000, 1500, 2000, 3000, 4000, 6000, 8000];
+  const CU_LEVELS = [5, 10, 15, 20, 25, 30, 35, 40, 45, 50];
+
+  function parseCsvRows(text) {{
+    const lines = String(text || "").split(/\\r?\\n/).filter(l => l.trim() && !l.trim().startsWith("#"));
+    if (lines.length < 2) return [];
+    const headers = lines[0].split(",").map(s => s.trim());
+    return lines.slice(1).map(line => {{
+      const cols = line.split(",").map(s => s.trim());
+      const obj = {{}};
+      headers.forEach((h, i) => {{ obj[h] = cols[i] ?? ""; }});
+      return obj;
+    }});
+  }}
+
+  function inferFileMeta(fname) {{
+    const stem = String(fname || "").replace(/\\.csv$/i, "");
+    const parts = stem.split("_").filter(Boolean);
+    let ear = null;
+    let participantId = null;
+    let isAidedName = false;
+    let isAdaptiveName = false;
+    const reserved = new Set(["QVCV", "QCLS", "ELC", "TBT", "AIDED", "UNAIDED", "ADP50", "ADP100", "L", "R", "B", "LEFT", "RIGHT", "BOTH"]);
+
+    for (let k = 0; k < parts.length; k++) {{
+      const u = parts[k].toUpperCase();
+      if (u === "R" || u === "RIGHT") ear = "Right";
+      else if (u === "L" || u === "LEFT") ear = "Left";
+      else if (u === "B" || u === "BOTH") ear = "Both";
+      else if (u === "AIDED") isAidedName = true;
+      else if (u === "ADP50" || u === "ADP100") isAdaptiveName = true;
+    }}
+    for (let k = 1; k < parts.length; k++) {{
+      const p = parts[k];
+      const u = p.toUpperCase();
+      if (!reserved.has(u) && !/^\\d{{8}}$/.test(p) && !/^\\d{{4}}$/.test(p)) {{
+        participantId = p;
+        break;
+      }}
+    }}
+    return {{ participantId, ear, isAidedName, isAdaptiveName }};
+  }}
+
+  /* Parse both Standard Fixed-SNR and Adaptive-SNR qVCV CSVs */
+  function parseQvcvCsv(text, filename = "") {{
+    const rows = parseCsvRows(text);
+    const meta = inferFileMeta(filename);
+    const counts = Array.from({{ length: 10 }}, () => new Array(11).fill(0));
+    const snrSum = new Array(10).fill(0.0);
+    const snrCnt = new Array(10).fill(0);
+    let pracTot = 0, pracHit = 0;
+    let gradedTot = 0;
+    let snrAllSum = 0.0, snrAllCnt = 0;
+    let snrDiffersFromFixed = false;
+    let modeStr = "";
+    let condStr = "";
+    let earStr = "";
+    let finalLossDb = null;
+    let lastRunningLossDb = null;
+    let lastRunningSeDb = null;
+
+    for (const r of rows) {{
+      const ph = (r.Phase || "").toLowerCase();
+      const tc = (r["Target Consonant"] || r.Target || r.Consonant || "").toUpperCase();
+      let ur = (r["User Response"] || r.Response || "").toUpperCase();
+      if (ur === "OTHER" || ur === "UNK") ur = "???";
+      const si = STIM_CONS.indexOf(tc);
+      const ri = DISP_CONS.indexOf(ur);
+
+      if (r.Mode && !modeStr) modeStr = r.Mode.trim();
+      if (r.Condition && !condStr) condStr = r.Condition.trim();
+      if (r.Ear && !earStr) earStr = r.Ear.trim();
+
+      if (ph.includes("practice")) {{
+        if (si >= 0) {{ pracTot++; if (si === ri) pracHit++; }}
+      }} else if (si >= 0 && ri >= 0) {{
+        counts[si][ri] += 1;
+        gradedTot += 1;
+
+        const snrVal = parseFloat(r.Target_SNR_dB ?? r.SNR_dB ?? r.SNR ?? "");
+        if (Number.isFinite(snrVal)) {{
+          snrSum[si] += snrVal;
+          snrCnt[si] += 1;
+          snrAllSum += snrVal;
+          snrAllCnt += 1;
+          if (Math.abs(snrVal - REF_SNR_DB[si]) > 0.25) snrDiffersFromFixed = true;
+        }}
+        const fLoss = parseFloat(r.Final_SNR_Loss_dB ?? "");
+        if (Number.isFinite(fLoss)) finalLossDb = fLoss;
+        const rLoss = parseFloat(r.Running_SNR_Loss_dB ?? "");
+        if (Number.isFinite(rLoss)) lastRunningLossDb = rLoss;
+        const rSe = parseFloat(r.Running_SE_dB ?? "");
+        if (Number.isFinite(rSe) && rSe > 0) lastRunningSeDb = rSe;
+      }}
+    }}
+
+    const isAdaptive =
+      modeStr.toLowerCase().startsWith("adaptive") ||
+      meta.isAdaptiveName ||
+      snrDiffersFromFixed ||
+      finalLossDb !== null;
+
+    const resolvedLossDb = finalLossDb !== null ? finalLossDb : (isAdaptive ? lastRunningLossDb : null);
+    const meanSnrDb = snrAllCnt > 0 ? (snrAllSum / snrAllCnt) : null;
+
+    let obsSnrPerCons = null;
+    if (isAdaptive && snrAllCnt > 0) {{
+      /* Fill per-consonant mean presented SNR; fallback to REF_SNR_DB - resolvedLossDb if any consonant had 0 trials */
+      const shiftEst = resolvedLossDb !== null ? resolvedLossDb : 0.0;
+      obsSnrPerCons = STIM_CONS.map((_, c) =>
+        snrCnt[c] > 0 ? (snrSum[c] / snrCnt[c]) : (REF_SNR_DB[c] + shiftEst)
+      );
+    }}
+
+    let earNorm = meta.ear;
+    if (earStr) {{
+      const e0 = earStr.toLowerCase();
+      if (e0.startsWith("r")) earNorm = "Right";
+      else if (e0.startsWith("l")) earNorm = "Left";
+      else if (e0.startsWith("b")) earNorm = "Both";
+    }}
+    const condition = condStr
+      ? (condStr.toLowerCase().includes("aid") && !condStr.toLowerCase().includes("unaid") ? "Aided" : "Unaided")
+      : (meta.isAidedName ? "Aided" : "Unaided");
+
+    return {{
+      participantId: meta.participantId,
+      ear: earNorm,
+      condition,
+      mode: modeStr || (isAdaptive ? "adaptive" : "standard_100"),
+      isAdaptive,
+      nTrials: gradedTot,
+      counts,
+      practicePc: pracTot >= 5 ? Math.round((100 * pracHit) / pracTot) : null,
+      obsSnrPerCons,
+      meanSnrDb,
+      finalSnrLossDb: resolvedLossDb,
+      finalSeDb: isAdaptive ? lastRunningSeDb : null
+    }};
+  }}
+
+  /* Combine 1 or 2 (Test + Retest) parsed qVCV runs cleanly */
+  function mergeQvcvRuns(parsedList) {{
+    const valid = (parsedList || []).filter(p => p && p.nTrials > 0);
+    if (valid.length === 0) return null;
+    const r1 = valid[0];
+    const r2 = valid.length >= 2 ? valid[1] : null;
+
+    const pracVals = valid.map(v => v.practicePc).filter(v => v !== null && Number.isFinite(v));
+    const practicePc = pracVals.length > 0
+      ? Math.round(pracVals.reduce((a, b) => a + b, 0) / pracVals.length)
+      : null;
+
+    const isAdaptive = valid.some(v => v.isAdaptive);
+    let measuredSrtLossDb = null;
+    let measuredSrtSeDb = null;
+    let obsSnrPerCons = null;
+    let meanAdaptiveSnrDb = null;
+
+    if (isAdaptive) {{
+      const withLoss = valid.filter(v => v.finalSnrLossDb !== null && Number.isFinite(v.finalSnrLossDb));
+      if (withLoss.length === 1) {{
+        measuredSrtLossDb = withLoss[0].finalSnrLossDb;
+        measuredSrtSeDb = withLoss[0].finalSeDb;
+      }} else if (withLoss.length >= 2) {{
+        const w = withLoss.map(v => {{
+          const se = (v.finalSeDb && v.finalSeDb > 0.1) ? v.finalSeDb : 1.15;
+          return 1.0 / (se * se);
+        }});
+        const wSum = w.reduce((a, b) => a + b, 0);
+        measuredSrtLossDb = withLoss.reduce((acc, v, idx) => acc + w[idx] * v.finalSnrLossDb, 0) / wSum;
+        measuredSrtSeDb = 1.0 / Math.sqrt(wSum);
+      }}
+
+      const withObs = valid.filter(v => Array.isArray(v.obsSnrPerCons));
+      if (withObs.length > 0) {{
+        obsSnrPerCons = new Array(10).fill(0.0);
+        for (let c = 0; c < 10; c++) {{
+          let num = 0.0, den = 0.0;
+          for (const v of withObs) {{
+            const rowN = Math.max(1, v.counts[c].reduce((a, b) => a + b, 0));
+            num += rowN * v.obsSnrPerCons[c];
+            den += rowN;
+          }}
+          obsSnrPerCons[c] = num / Math.max(den, 1.0);
+        }}
+      }}
+      const withMean = valid.filter(v => v.meanSnrDb !== null && Number.isFinite(v.meanSnrDb));
+      if (withMean.length > 0) {{
+        meanAdaptiveSnrDb = withMean.reduce((a, v) => a + v.meanSnrDb, 0) / withMean.length;
+      }}
+    }}
+
+    return {{
+      participantId: r1.participantId || (r2 ? r2.participantId : null),
+      ear: r1.ear || (r2 ? r2.ear : null),
+      isAdaptive,
+      qvcvMode: r1.mode,
+      countsS1: r1.counts,
+      countsS2: r2 ? r2.counts : null,
+      srtLossS1Db: r1.finalSnrLossDb,
+      srtLossS2Db: r2 ? r2.finalSnrLossDb : null,
+      practicePc,
+      measuredSrtLossDb,
+      measuredSrtSeDb,
+      obsSnrPerCons,
+      meanAdaptiveSnrDb
+    }};
+  }}
+
+  function parseQclsElcCsv(text, filename = "") {{
+    const rows = parseCsvRows(text);
+    const meta = inferFileMeta(filename);
+    const elc = Array.from({{ length: 10 }}, () => new Array(10).fill(null));
+    for (const r of rows) {{
+      const freq = parseFloat(r.Freq_Hz || r.Freq || "0");
+      const cu = Math.round(parseFloat(r.CU || "0"));
+      const lvl = parseFloat(r.Level_dB_SPL || r.Level || "NaN");
+      const fi = AUD_FREQS_HZ.findIndex(f0 => Math.abs(f0 - freq) / f0 < 0.04);
+      const ci = CU_LEVELS.indexOf(cu);
+      if (fi >= 0 && ci >= 0 && Number.isFinite(lvl)) elc[fi][ci] = lvl;
+    }}
+    return {{
+      participantId: meta.participantId,
+      ear: meta.ear,
+      elc10x10: elc
+    }};
+  }}
+
+  function formatExportFilename(listenerId, ear, ext, dateYmdOverride = null) {{
+    const cleanId = String(listenerId || "Patient").trim().replace(/[^A-Za-z0-9_-]/g, "_") || "Patient";
+    const e0 = String(ear || "Unspecified").toUpperCase();
+    const earCode = e0.startsWith("R") ? "R" : (e0.startsWith("L") ? "L" : (e0.startsWith("B") ? "B" : "M"));
+    let ymd = dateYmdOverride;
+    if (!ymd) {{
+      const d = new Date();
+      ymd = `${{d.getFullYear()}}${{String(d.getMonth() + 1).padStart(2, "0")}}${{String(d.getDate()).padStart(2, "0")}}`;
+    }}
+    return `qPRO_${{cleanId}}_${{earCode}}_${{ymd}}.${{ext}}`;
+  }}
+
+  const api = {{
+    init,
+    evaluate,
+    parseQvcvCsv,
+    mergeQvcvRuns,
+    parseQclsElcCsv,
+    formatExportFilename,
+    STIM_CONS,
+    DISP_CONS
+  }};
   if (typeof module !== "undefined" && module.exports) module.exports = api;
   global.QProEngine = api;
 }})(typeof globalThis !== "undefined" ? globalThis : window);
 """
+    out_js.unlink(missing_ok=True)
     out_js.write_text(js_loader)
     print(f"Built {out_wasm.name} ({len(clean_wasm)} bytes) and {out_js.name} ({len(js_loader)} bytes).")
 

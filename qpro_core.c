@@ -58,7 +58,7 @@ static inline int q_isnan_s(double x) {
 typedef struct {
     QProModelConst M;
     double in_buf[256];
-    double out_buf[420];
+    double out_buf[430];
 } QProGlobalState;
 
 static QProGlobalState G = {
@@ -107,6 +107,29 @@ static double q_eq_snr_deficit_db(double pc_val) {
         }
     }
     return -G.M.ds_mono[QPRO_N_MONO - 1];
+}
+
+/* Exact monotone inverse of q_eq_snr_deficit_db: maps NH-equivalent SNR deficit (dB) -> recognition [0..1] */
+static double q_eq_pc_from_deficit_db(double def_db) {
+    double pc_nh0 = G.M.pc_nh0;
+    if (def_db <= 0.0) {
+        double denom = q_max(0.990 - pc_nh0, 1e-4);
+        double pc = pc_nh0 + (-def_db / 2.2) * denom;
+        return q_clip(pc, pc_nh0, 0.995);
+    }
+    double ds_target = -def_db;
+    if (ds_target <= G.M.ds_mono[0]) return G.M.pc_mono[0];
+    if (ds_target >= G.M.ds_mono[QPRO_N_MONO - 1]) return pc_nh0;
+    for (int i = 0; i < QPRO_N_MONO - 1; i++) {
+        double d0 = G.M.ds_mono[i];
+        double d1 = G.M.ds_mono[i + 1];
+        if ((ds_target >= d0 && ds_target <= d1) || (ds_target >= d1 && ds_target <= d0)) {
+            double span = d1 - d0;
+            double t = (q_abs(span) > 1e-12) ? ((ds_target - d0) / span) : 0.0;
+            return q_clip(G.M.pc_mono[i] + t * (G.M.pc_mono[i + 1] - G.M.pc_mono[i]), G.M.pc_mono[0], pc_nh0);
+        }
+    }
+    return G.M.pc_mono[0];
 }
 
 /* Piecewise-linear forward/inverse lookup on a 10-point qCLS contour (CU 5..50) */
@@ -584,6 +607,10 @@ int qpro_evaluate(void) {
     if (n_boot > 128) n_boot = 128;
     uint64_t rng_state = (uint64_t)(uint32_t)G.in_buf[224] + 0x123456789abcdefULL;
     double measured_srt = G.in_buf[225];
+    double measured_srt_se = G.in_buf[226];
+    int has_obs_snr = (G.in_buf[227] > 0.5) ? 1 : 0;
+    double obs_snr[10];
+    for (int c = 0; c < 10; c++) obs_snr[c] = G.in_buf[228 + c];
 
     const double *retspl = (trans_id == 1) ? G.M.retspl_legacy
                          : ((trans_id == 2) ? G.M.retspl_ansi : G.M.retspl_er3a);
@@ -677,10 +704,14 @@ int qpro_evaluate(void) {
     double nd_aud[10][2][10], ac_aud[10][2];
     double nd_per[10][2][10], ac_per[10][2];
     double nd_prc[10][2][10], ac_prc[10][2];
+    double nd_obs[10][2][10], ac_obs[10][2];
 
     q_compute_peripheral_features(G.M.ref_snr_db, aud_hl, zero_ohc, nd_aud, ac_aud);
     q_compute_peripheral_features(G.M.ref_snr_db, aud_hl, hl_ohc,   nd_per, ac_per);
     q_compute_peripheral_features(snr_60,         aud_hl, hl_ohc,   nd_prc, ac_prc);
+    if (has_obs_snr) {
+        q_compute_peripheral_features(obs_snr,    aud_hl, hl_ohc,   nd_obs, ac_obs);
+    }
 
     /* 3. Fit listener biophysical clarity efficiency */
     double tot_trials = 0.0, tot_corr = 0.0, tot_unk = 0.0;
@@ -695,8 +726,8 @@ int qpro_evaluate(void) {
 
     QProFitCtx fit_ctx;
     fit_ctx.counts = (const double (*)[11])counts;
-    fit_ctx.nd = (const double (*)[2][10])nd_per;
-    fit_ctx.ac = (const double (*)[2])ac_per;
+    fit_ctx.nd = has_obs_snr ? (const double (*)[2][10])nd_obs : (const double (*)[2][10])nd_per;
+    fit_ctx.ac = has_obs_snr ? (const double (*)[2])ac_obs     : (const double (*)[2])ac_per;
     fit_ctx.nd_prac = (practice_pc >= 0.0) ? (const double (*)[2][10])nd_prc : 0;
     fit_ctx.ac_prac = (practice_pc >= 0.0) ? (const double (*)[2])ac_prc : 0;
     fit_ctx.practice_pc = practice_pc;
@@ -728,10 +759,16 @@ int qpro_evaluate(void) {
     double d_tot = (!q_isnan_s(measured_srt)) ? measured_srt : q_eq_snr_deficit_db(pc_ful);
     double d_ohc = d_per - d_aud;
     double d_neu = d_tot - d_per;
+    int is_adaptive_mode = (has_obs_snr || !q_isnan_s(measured_srt)) ? 1 : 0;
+    double eq_fixed_pc = (!q_isnan_s(measured_srt))
+                       ? (100.0 * q_eq_pc_from_deficit_db(d_tot))
+                       : (has_obs_snr ? (100.0 * pc_ful) : emp_pc);
 
-    /* 5. Parametric Bootstrap SE (3-param BFGS per draw) */
+    /* 5. Parametric Bootstrap SE (or direct posterior SE from Adaptive qVCV tracker) */
     double se_tot = 0.65;
-    if (n_boot >= 4) {
+    if (!q_isnan_s(measured_srt_se) && measured_srt_se > 0.05) {
+        se_tot = measured_srt_se;
+    } else if (n_boot >= 4) {
         double boot_vals[128];
         int row_n[10];
         for (int i = 0; i < 10; i++) {
@@ -749,7 +786,7 @@ int qpro_evaluate(void) {
                     double cdf = 0.0;
                     int picked = 10;
                     for (int j = 0; j < 11; j++) {
-                        cdf += mat_s3[i][j];
+                        cdf += has_obs_snr ? mu_bio[i][j] : mat_s3[i][j];
                         if (u <= cdf) { picked = j; break; }
                     }
                     c_sim[i][picked] += 1.0;
@@ -757,13 +794,16 @@ int qpro_evaluate(void) {
             }
             QProFitCtx b_ctx;
             b_ctx.counts = (const double (*)[11])c_sim;
-            b_ctx.nd = (const double (*)[2][10])nd_per;
-            b_ctx.ac = (const double (*)[2])ac_per;
+            b_ctx.nd = has_obs_snr ? (const double (*)[2][10])nd_obs : (const double (*)[2][10])nd_per;
+            b_ctx.ac = has_obs_snr ? (const double (*)[2])ac_obs     : (const double (*)[2])ac_per;
             b_ctx.nd_prac = 0; b_ctx.ac_prac = 0;
             b_ctx.practice_pc = -1.0;
             b_ctx.use_nuisance = 0;
             double eff_b[10], unk_b = -2.5, p_b[10][11];
             q_fit_listener_bfgs(&b_ctx, eff_b, &unk_b, p_b);
+            if (has_obs_snr) {
+                q_compute_probs_10x11((const double (*)[2][10])nd_per, (const double (*)[2])ac_per, eff_b, unk_b, G.M.lapse_rate, p_b);
+            }
             double pc_b = 0.0;
             for (int c = 0; c < 10; c++) pc_b += p_b[c][c];
             boot_vals[b] = q_eq_snr_deficit_db(pc_b / 10.0);
@@ -795,9 +835,10 @@ int qpro_evaluate(void) {
     const int cls_voice[10]  = {0, 0, 0, 1, 0, 1, 1, 1, 0, 0}; /* 0=voiced, 1=voiceless */
     const int cls_manner[10] = {2, 2, 2, 2, 1, 0, 0, 2, 0, 0}; /* 0=fric, 1=nasal, 2=stop */
     const int cls_place[10]  = {1, 0, 3, 3, 0, 0, 2, 0, 1, 0}; /* 0=alv, 1=lab, 2=postalv, 3=velar */
-    double rtr_v = q_min(100.0 * q_feature_rtr_pct(smoothed_ccm, cls_voice,  2) / q_max(G.M.nh_rtr_voicing, 1e-4), 100.0);
-    double rtr_m = q_min(100.0 * q_feature_rtr_pct(smoothed_ccm, cls_manner, 3) / q_max(G.M.nh_rtr_manner,  1e-4), 100.0);
-    double rtr_p = q_min(100.0 * q_feature_rtr_pct(smoothed_ccm, cls_place,  4) / q_max(G.M.nh_rtr_place,   1e-4), 100.0);
+    const double (*ccm_for_rtr)[11] = has_obs_snr ? (const double (*)[11])mat_s3 : (const double (*)[11])smoothed_ccm;
+    double rtr_v = q_min(100.0 * q_feature_rtr_pct(ccm_for_rtr, cls_voice,  2) / q_max(G.M.nh_rtr_voicing, 1e-4), 100.0);
+    double rtr_m = q_min(100.0 * q_feature_rtr_pct(ccm_for_rtr, cls_manner, 3) / q_max(G.M.nh_rtr_manner,  1e-4), 100.0);
+    double rtr_p = q_min(100.0 * q_feature_rtr_pct(ccm_for_rtr, cls_place,  4) / q_max(G.M.nh_rtr_place,   1e-4), 100.0);
 
     double pta_124 = (aud_hl[3] + aud_hl[5] + aud_hl[7]) / 3.0;
     double lf_pta  = 0.25 * (aud_hl[0] + aud_hl[1] + aud_hl[2] + aud_hl[3]);
@@ -816,10 +857,11 @@ int qpro_evaluate(void) {
     int ohc_elev = (d_ohc > G.M.p90_ohc_db || hf_ohc >= 15.0) ? 1 : 0;
     int neu_elev = (d_neu > G.M.p90_neural_db && (d_neu - 1.28 * se_tot) > 0.3) ? 1 : 0;
     int neu_sev  = (d_neu > q_max(G.M.p95_neural_db, 3.2)) ? 1 : 0;
+    double cmp_pc = is_adaptive_mode ? eq_fixed_pc : emp_pc;
 
     int pheno_id = 4;
-    if (!aud_elev && !ohc_elev && !neu_elev && emp_pc >= G.M.nh_pc_p05) pheno_id = 0;
-    else if (pta_124 <= 20.0 && max_aud <= 25.0 && (neu_elev || emp_pc < G.M.nh_pc_p05)) pheno_id = 1;
+    if (!aud_elev && !ohc_elev && !neu_elev && cmp_pc >= G.M.nh_pc_p05) pheno_id = 0;
+    else if (pta_124 <= 20.0 && max_aud <= 25.0 && (neu_elev || cmp_pc < G.M.nh_pc_p05)) pheno_id = 1;
     else if (pta_124 <= 20.0 && max_aud > 25.0 && neu_elev) pheno_id = 2;
     else if ((aud_elev || ohc_elev) && !neu_elev) pheno_id = 3;
     else if ((aud_elev || ohc_elev) && neu_sev) pheno_id = 5;
@@ -860,6 +902,8 @@ int qpro_evaluate(void) {
     G.out_buf[31] = rtr_p;
     G.out_buf[32] = (double)pheno_id;
     G.out_buf[33] = kappa;
+    G.out_buf[34] = eq_fixed_pc;
+    G.out_buf[35] = (double)is_adaptive_mode;
 
     for (int f = 0; f < 10; f++) {
         G.out_buf[40 + f] = aud_spl[f];
@@ -889,10 +933,11 @@ int qpro_evaluate(void) {
     const double reug[10]   = { 1.0,  2.0,  3.0,  3.5,  5.5, 11.5, 15.5, 13.5,  6.5,  3.0};
     const double nal_kf[10] = {-10.0, -6.0, -2.0,  0.0,  1.5,  2.5,  3.0,  2.5,  0.0, -2.0};
     const double lf_usom_wt[3] = {1.0, 0.75, 0.40};
+    const double ct_min[10]    = {42.0, 39.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0, 36.0};
 
     int rx_amp = (pta_124 > 20.0 || hf_pta >= 25.0 || max_aud > 25.0) ? 1 : 0;
     double rx_mpo[10], rx_ig50[10], rx_ig65[10], rx_ig80[10];
-    double rx_rear50[10], rx_rear65[10], rx_rear80[10], rx_cr[10], rx_reur65[10];
+    double rx_rear50[10], rx_rear65[10], rx_rear80[10], rx_cr[10], rx_ct[10], rx_reur65[10];
     double max_usom_cut = 0.0, max_hf_desens = 0.0;
 
     for (int f = 0; f < 10; f++) {
@@ -914,6 +959,7 @@ int qpro_evaluate(void) {
             rx_rear65[f] = l_ff65[f] + reug[f];
             rx_rear80[f] = (l_ff65[f] + 15.0) + reug[f];
             rx_cr[f] = 1.0;
+            rx_ct[f] = q_clip(G.M.y_nh_elc[f * 10 + 1], ct_min[f], 48.0);
         }
     } else {
         for (int f = 0; f < 10; f++) {
@@ -994,6 +1040,56 @@ int qpro_evaluate(void) {
             rx_ig65[f] = q_max(0.0, r65 - u65);
             rx_ig80[f] = q_max(0.0, r80 - u80);
             rx_cr[f]   = q_clip(30.0 / q_max(r80 - r50, 10.7), 1.0, 2.8);
+
+            /* Individualized Soft-Speech Compression Kneepoint CT (dB SPL):
+             * Continuous bilinear equal-loudness hinge fit (1:1 below CT, m:1 above CT)
+             * across qCLS CU 5..40 anchored near CU 10 and bounded above ambient room noise. */
+            double ct_cu10 = q_clip(G.M.y_nh_elc[f_elc * 10 + 1], ct_min[f], 48.0);
+            if (rx_cr[f] <= 1.08) {
+                rx_ct[f] = q_max(ct_cu10, 44.0);
+            } else if (qcls_valid && !q_isnan_s(elc[f_elc][0]) && !q_isnan_s(elc[f_elc][6])) {
+                const double *ynh_c = &G.M.y_nh_elc[f_elc * 10];
+                const double *ypat_c = elc[f_elc];
+                double best_err = 1.0e18;
+                double best_ct = ct_cu10;
+                for (int ct_i = (int)ct_min[f]; ct_i <= 48; ct_i++) {
+                    double ct_cand = (double)ct_i;
+                    double n_pts = 0.0, sum_r = 0.0, sum_z = 0.0, sum_zz = 0.0, sum_rz = 0.0;
+                    for (int k = 0; k < 8; k++) {
+                        if (q_isnan_s(ypat_c[k])) continue;
+                        double xk = ynh_c[k];
+                        double z1 = q_min(xk - ct_cand, 0.0);
+                        double z2 = q_max(xk - ct_cand, 0.0);
+                        double rk = ypat_c[k] - z1;
+                        n_pts += 1.0;
+                        sum_r += rk;
+                        sum_z += z2;
+                        sum_zz += z2 * z2;
+                        sum_rz += rk * z2;
+                    }
+                    if (n_pts < 5.0) continue;
+                    double denom = n_pts * sum_zz - sum_z * sum_z;
+                    double m_hat = (denom > 1.0e-6) ? ((n_pts * sum_rz - sum_z * sum_r) / denom) : (1.0 / rx_cr[f]);
+                    m_hat = q_clip(m_hat, 0.35, 0.95);
+                    double a_hat = (sum_r - m_hat * sum_z) / n_pts;
+                    double mse = 0.0;
+                    for (int k = 0; k < 8; k++) {
+                        if (q_isnan_s(ypat_c[k])) continue;
+                        double xk = ynh_c[k];
+                        double pred = a_hat + q_min(xk - ct_cand, 0.0) + m_hat * q_max(xk - ct_cand, 0.0);
+                        double diff = ypat_c[k] - pred;
+                        mse += diff * diff;
+                    }
+                    mse = (mse / n_pts) + 0.03 * (ct_cand - ct_cu10) * (ct_cand - ct_cu10);
+                    if (mse < best_err) {
+                        best_err = mse;
+                        best_ct = ct_cand;
+                    }
+                }
+                rx_ct[f] = q_clip(best_ct, ct_min[f], 48.0);
+            } else {
+                rx_ct[f] = q_clip(45.0 - 0.12 * q_max(hl_pos - 20.0, 0.0), ct_min[f], 46.0);
+            }
         }
     }
 
@@ -1006,7 +1102,7 @@ int qpro_evaluate(void) {
     int rx_slow_wdrc = (neu_elev || rtr_p < 75.0 || rtr_m < 75.0 || hf_ohc >= 22.0) ? 1 : 0;
 
     /* Simulate Predicted Aided qVCV (%) with prescribed IG65 + WDRC dynamics */
-    double pred_aided_pc = emp_pc;
+    double pred_aided_pc = cmp_pc;
     if (rx_amp) {
         double mean_cr_hf = 0.25 * (rx_cr[5] + rx_cr[6] + rx_cr[7] + rx_cr[8]);
         double smear_rx = (rx_slow_wdrc ? 0.08 : 0.16) * q_max(mean_cr_hf - 1.05, 0.0);
@@ -1015,7 +1111,14 @@ int qpro_evaluate(void) {
         q_compute_probs_10x11((const double (*)[2][10])nd_rx, (const double (*)[2])ac_rx, eff_hat, unk_hat, G.M.lapse_rate, mat_rx);
         double s_rx = 0.0;
         for (int c = 0; c < 10; c++) s_rx += mat_rx[c][c];
-        pred_aided_pc = 10.0 * s_rx;
+        if (!q_isnan_s(measured_srt)) {
+            double d_unaided_mod = q_eq_snr_deficit_db(pc_ful);
+            double d_aided_mod   = q_eq_snr_deficit_db(s_rx / 10.0);
+            double mod_gain_db   = d_unaided_mod - d_aided_mod;
+            pred_aided_pc = 100.0 * q_eq_pc_from_deficit_db(d_tot - mod_gain_db);
+        } else {
+            pred_aided_pc = 10.0 * s_rx;
+        }
     }
     double d_eq_rx = q_eq_snr_deficit_db(pred_aided_pc / 100.0);
     double pred_snr_benefit = d_tot - d_eq_rx;
@@ -1043,6 +1146,7 @@ int qpro_evaluate(void) {
         G.out_buf[385 + f] = rx_ig80[f];
         G.out_buf[395 + f] = rx_cr[f];
         G.out_buf[405 + f] = rx_reur65[f];
+        G.out_buf[415 + f] = rx_ct[f];
     }
     return 0;
 }
@@ -1051,4 +1155,10 @@ int qpro_evaluate(void) {
 QPRO_EXPORT("qpro_eq_snr_deficit")
 double qpro_eq_snr_deficit(double pc_pct) {
     return q_eq_snr_deficit_db(pc_pct / 100.0);
+}
+
+/* Helper to map an NH-equivalent SNR deficit (dB) onto fixed-SNR equivalent qVCV % */
+QPRO_EXPORT("qpro_eq_pc_from_deficit")
+double qpro_eq_pc_from_deficit(double def_db) {
+    return 100.0 * q_eq_pc_from_deficit_db(def_db);
 }

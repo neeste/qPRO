@@ -112,7 +112,7 @@ def main() -> None:
       instance = res.instance;
     }} else if (typeof fetch === "function" && typeof location !== "undefined" && location.protocol !== "file:") {{
       try {{
-        const resp = await fetch("qpro_core.wasm");
+        const resp = await fetch("qpro_core.wasm?v=1.2.0");
         if (!resp.ok) throw new Error("HTTP " + resp.status);
         const buf = await resp.arrayBuffer();
         const res = await WebAssembly.instantiate(buf, imports);
